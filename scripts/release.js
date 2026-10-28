@@ -10,7 +10,8 @@ const dist = path.join(__dirname, '..', 'dist');
 const files = [`Lumen-Setup-${pkg.version}.exe`, 'Lumen-tv.apk'].map((f) => path.join(dist, f));
 for (const f of files) if (!fs.existsSync(f)) { console.error(`Falta ${f}`); process.exit(1); }
 
-const gh = process.platform === 'win32' && fs.existsSync('C:\Program Files\GitHub CLI\gh.exe') ? 'C:\Program Files\GitHub CLI\gh.exe' : 'gh';
+// gh may not be on PATH yet in a shell opened before it was installed.
+const gh = [process.env.GH_PATH, path.join(process.env.ProgramFiles || '', 'GitHub CLI', 'gh.exe')].find((p) => p && fs.existsSync(p)) || 'gh';
 const notes = process.argv[2] || `Lumen ${pkg.version}`;
-execFileSync(gh, ['release', 'create', `v${pkg.version}`, ...files, '--title', `Lumen ${pkg.version}`, '--notes', notes, '--latest'], { stdio: 'inherit' });
+execFileSync(gh, ['release', 'create', `v${pkg.version}`, ...files, '--title', `Lumen ${pkg.version}`, '--notes', notes, '--latest'], { stdio: 'inherit', shell: gh === 'gh' });
 console.log(`Publicada v${pkg.version}`);
