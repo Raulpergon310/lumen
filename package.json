@@ -1,0 +1,80 @@
+{
+  "name": "lumen",
+  "productName": "Lumen",
+  "version": "1.2.0",
+  "description": "Cliente ligero y bonito para Jellyfin: Windows, Android TV y navegador",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dev": "node dev-server.js",
+    "dist": "electron-builder --win",
+    "publicar": "node scripts/build-installer.js && node scripts/publicar.js",
+    "instalador": "node scripts/build-installer.js",
+    "release": "node scripts/build-installer.js && bash android/build.sh && node scripts/release.js",
+    "web": "node scripts/build-web.js"
+  },
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "hls.js": "^1.7.3",
+    "jassub": "1.8.8",
+    "koffi": "^2.16.3"
+  },
+  "devDependencies": {
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "app.lumen.jellyfin",
+    "productName": "Lumen",
+    "files": [
+      "main.js",
+      "preload.js",
+      "paths.js",
+      "updater.js",
+      "src/**/*",
+      "build/icon.png",
+      "node_modules/hls.js/dist/hls.min.js",
+      "node_modules/jassub/dist/**/*",
+      "node_modules/koffi/package.json",
+      "node_modules/koffi/index.js",
+      "node_modules/koffi/indirect.js",
+      "node_modules/koffi/build/koffi/win32_x64/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/mpv",
+        "to": "mpv"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Lumen",
+      "runAfterFinish": true,
+      "artifactName": "Lumen-Setup-${version}.${ext}"
+    },
+    "asarUnpack": [
+      "node_modules/koffi/build/**/*"
+    ]
+  },
+  "lumen": {
+    "githubRepo": "Raulpergon310/lumen"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Raulpergon310/lumen.git"
+  },
+  "homepage": "https://raulpergon310.github.io/lumen/"
+}

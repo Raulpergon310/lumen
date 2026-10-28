@@ -1,0 +1,23 @@
+# Dependencies and build output
+node_modules/
+dist/
+site/
+android/build/
+
+# Large binaries: mpv goes into the installer, not the repository (see README)
+vendor/mpv/*.exe
+vendor/mpv/*.dll
+vendor/mpv/portable_config/cache/
+
+# Signing keys and anything private: never in the repository
+*.keystore
+*.jks
+*.pass
+*.pem
+*.p12
+.env*
+config.json
+
+# Local tooling
+.claude/
+*.log

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' app: blob: data:; img-src * data: blob:; media-src * blob: data:; connect-src *; script-src 'self' app: 'wasm-unsafe-eval'; worker-src 'self' app: blob:; style-src 'self' app: 'unsafe-inline'; font-src * data: blob:">
+  <title>Lumen</title>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div class="drag-strip"></div>
+  <div id="boot" class="boot">
+    <div class="boot-logo"><svg class="logo-svg" viewBox="0 0 48 48" aria-label="Inicio"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#a9a9b6"/></linearGradient></defs><rect x="7" y="8" width="34" height="13.5" rx="4.5" fill="url(#lg)"/><rect x="7" y="26.5" width="34" height="13.5" rx="4.5" fill="url(#lg)"/><circle cx="14" cy="14.75" r="2.2" fill="#0a0a0c"/><circle cx="14" cy="33.25" r="2.2" fill="#0a0a0c"/><path d="M21 14.75h13M21 33.25h13" stroke="#0a0a0c" stroke-width="2.6" stroke-linecap="round"/></svg></div>
+    <div class="spinner"></div>
+  </div>
+  <header id="nav" class="nav" hidden></header>
+  <main id="view" class="view"></main>
+  <div id="player-root"></div>
+  <div id="toasts" class="toasts"></div>
+  <script src="vendor/hls/hls.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
