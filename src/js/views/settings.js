@@ -29,20 +29,20 @@ function select(key, fallback, label, options, hint) {
 
 // New seasons (seasons.js): what the last check found, and a button to check now.
 function seasonSetting() {
-  const status = h('span', { class: 'hint' }, 'Avisa cuando sale una temporada nueva de una serie que ves y aún no está en el NAS. Se comprueba cada 12 horas.');
+  const status = h('span', { class: 'hint' }, 'Avisa cuando sale una temporada o un episodio nuevo de cualquier serie del NAS que aún no tienes descargado. Se comprueba cada 12 horas.');
   const describe = (s, n) => (s
-    ? `Última comprobación: ${s.series} series que sigues, ${s.checked} encontradas en TVmaze, ${n} con temporada nueva.`
+    ? `Última comprobación: ${s.series} series, ${s.checked} encontradas en TVmaze. ${s.seasons ?? n} con temporada nueva y ${s.episodes ?? 0} con episodios nuevos${n !== s.found ? ` (${s.found - n} ocultas)` : ''}.`
     : status.textContent);
   import('../seasons.js').then((m) => { const s = m.lastCheckSummary(); if (s) status.textContent = describe(s, s.found); });
   const btn = button('Comprobar ahora', {
     onclick: async () => {
       btn.disabled = true;
-      status.textContent = 'Comprobando… (tarda unos segundos por serie)';
+      status.textContent = 'Comprobando… (la primera vez puede tardar unos minutos: va serie a serie)';
       try {
         const m = await import('../seasons.js');
         const found = await m.newSeasons({ force: true });
         status.textContent = describe(m.lastCheckSummary(), found.length);
-        if (found.length) toast(`${found.length} serie${found.length > 1 ? 's' : ''} con temporada nueva: mira la fila en Inicio`);
+        if (found.length) toast(`${found.length} serie${found.length > 1 ? 's' : ''} con novedades para descargar: mira la fila en Inicio`);
       } catch (e) {
         status.textContent = `No se pudo comprobar: ${e.message}`;
       } finally {

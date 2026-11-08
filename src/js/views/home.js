@@ -26,7 +26,7 @@ export async function homeView({ isStale }) {
   // Recommendations load after the page is on screen, so they never slow down opening the app.
   const forYou = h('div', { class: 'rec-slot' });
   const discover = h('div', { class: 'rec-slot' });
-  // Lo de siempre arriba (seguir viendo, temporadas nuevas, lo recién añadido); las recomendaciones
+  // Lo de siempre arriba (seguir viendo, temporadas y episodios nuevos, lo recién añadido); las recomendaciones
   // y los «Porque viste…» al final.
   const newSeasons = h('div', { class: 'rec-slot' });
   const rows = [
