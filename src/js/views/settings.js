@@ -27,6 +27,32 @@ function select(key, fallback, label, options, hint) {
     sel);
 }
 
+// New seasons (seasons.js): what the last check found, and a button to check now.
+function seasonSetting() {
+  const status = h('span', { class: 'hint' }, 'Avisa cuando sale una temporada nueva de una serie que ves y aún no está en el NAS. Se comprueba cada 12 horas.');
+  const describe = (s, n) => (s
+    ? `Última comprobación: ${s.series} series que sigues, ${s.checked} encontradas en TVmaze, ${n} con temporada nueva.`
+    : status.textContent);
+  import('../seasons.js').then((m) => { const s = m.lastCheckSummary(); if (s) status.textContent = describe(s, s.found); });
+  const btn = button('Comprobar ahora', {
+    onclick: async () => {
+      btn.disabled = true;
+      status.textContent = 'Comprobando… (tarda unos segundos por serie)';
+      try {
+        const m = await import('../seasons.js');
+        const found = await m.newSeasons({ force: true });
+        status.textContent = describe(m.lastCheckSummary(), found.length);
+        if (found.length) toast(`${found.length} serie${found.length > 1 ? 's' : ''} con temporada nueva: mira la fila en Inicio`);
+      } catch (e) {
+        status.textContent = `No se pudo comprobar: ${e.message}`;
+      } finally {
+        btn.disabled = false;
+      }
+    },
+  });
+  return h('div', { class: 'setting' }, h('span', { class: 'setting-text' }, h('span', null, 'Aviso de temporadas nuevas'), status), btn);
+}
+
 export function settingsView() {
   const servers = ctx.savedServers();
   const serverList = h('div', { class: 'setting-list' }, servers.map((s) => h('div', { class: 'setting' },
@@ -84,6 +110,9 @@ export function settingsView() {
       toggle('autoplayNext', true, 'Reproducir el siguiente episodio automáticamente'),
       toggle('autoSkipIntro', false, 'Saltar intros automáticamente', 'Requiere que el servidor tenga detectadas las intros.'),
     ),
+    h('section', { class: 'settings-group' },
+      h('h2', null, 'Temporadas nuevas'),
+      seasonSetting()),
     h('section', { class: 'settings-group' },
       h('h2', null, 'Servidores'),
       serverList),

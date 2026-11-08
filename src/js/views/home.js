@@ -9,9 +9,11 @@ export async function homeView({ isStale }) {
   const api = ctx.api;
   const libs = ctx.views.filter((v) => SHOWN_LIBS.has(v.CollectionType));
 
-  const [resume, nextUp, ...latest] = await Promise.allSettled([
+  const [resume, nextUp, randomPick, ...latest] = await Promise.allSettled([
     api.resume(),
     api.nextUp(),
+    // For the carousel: films and series you haven't watched, picked at random from the whole library.
+    api.items({ Recursive: true, IncludeItemTypes: 'Movie,Series', Filters: 'IsUnplayed', SortBy: 'Random', ImageTypes: 'Backdrop', Limit: 12 }),
     ...libs.map((v) => api.latest(v.Id)),
   ]);
   if (isStale()) return null;
@@ -38,9 +40,12 @@ export async function homeView({ isStale }) {
   import('../seasons.js').then((m) => m.newSeasonsRow(newSeasons)).catch(() => newSeasons.remove());
   loadRecommendations(libs, forYou, discover);
 
-  const heroPool = [...libs.flatMap((_, i) => val(latest[i]).slice(0, 4))]
-    .filter((i) => i.BackdropImageTags?.length && i.Type !== 'Episode');
-  const heroItems = interleave(heroPool).slice(0, 6);
+  // Carousel: a couple of new arrivals plus unwatched titles at random from the whole library.
+  const unwatched = (i) => i.BackdropImageTags?.length && i.Type !== 'Episode' && !i.UserData?.Played;
+  const fresh = interleave(libs.flatMap((_, i) => val(latest[i]).slice(0, 4)).filter(unwatched)).slice(0, 2);
+  const random = (randomPick.status === 'fulfilled' ? randomPick.value?.Items || [] : []).filter(unwatched);
+  const seenIds = new Set();
+  const heroItems = shuffle([...fresh, ...random].filter((i) => !seenIds.has(i.Id) && seenIds.add(i.Id))).slice(0, 6);
 
   if (!rows.length && !heroItems.length) {
     return emptyState('Tu biblioteca está vacía', 'Cuando añadas películas o series en Jellyfin aparecerán aquí.');

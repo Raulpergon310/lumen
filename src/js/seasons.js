@@ -12,6 +12,10 @@ const CHECK_MS = 12 * 3600 * 1000;
 const MAX_SERIES = 60;
 
 let running = null;
+let lastSummary = null;
+export function lastCheckSummary() {
+  return lastSummary || store.get('seasonCheck2')?.summary || null;
+}
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -39,12 +43,20 @@ async function tvmaze(path) {
 async function tvmazeId(series) {
   const ids = store.get('tvmazeIds', {});
   const known = ids[series.Id];
-  if (known && (known.id || Date.now() - known.at < 30 * 24 * 3600 * 1000)) return known.id;
+  // "Not found" answers from before the name search existed (no v) are asked again.
+  if (known && (known.id || (known.v === 2 && Date.now() - known.at < 30 * 24 * 3600 * 1000))) return known.id;
   const p = series.ProviderIds || {};
   let show = null;
   if (p.Tvdb) show = await tvmaze(`/lookup/shows?thetvdb=${encodeURIComponent(p.Tvdb)}`);
   if (!show && p.Imdb) show = await tvmaze(`/lookup/shows?imdb=${encodeURIComponent(p.Imdb)}`);
-  const next = { ...store.get('tvmazeIds', {}), [series.Id]: { id: show?.id || 0, at: Date.now() } };
+  // Only a TMDB id (common with anime): search by name, accepted only if the year matches.
+  if (!show && series.Name) {
+    const hit = await tvmaze(`/singlesearch/shows?q=${encodeURIComponent(series.OriginalTitle || series.Name)}`)
+      || (series.OriginalTitle && series.OriginalTitle !== series.Name ? await tvmaze(`/singlesearch/shows?q=${encodeURIComponent(series.Name)}`) : null);
+    const y = parseInt(hit?.premiered, 10);
+    if (hit && (!series.ProductionYear || !y || Math.abs(y - series.ProductionYear) <= 1)) show = hit;
+  }
+  const next = { ...store.get('tvmazeIds', {}), [series.Id]: { id: show?.id || 0, at: Date.now(), v: 2 } };
   store.set('tvmazeIds', next);
   return show?.id || 0;
 }
@@ -65,28 +77,33 @@ async function runCheck() {
   if (!ids.length) return [];
   const chosen = ids.slice(0, MAX_SERIES);
 
-  const [seriesR, seasonsR] = await Promise.allSettled([
-    bg({ Ids: chosen.join(','), Fields: 'ProviderIds', EnableImages: false }),
-    bg({ Recursive: true, IncludeItemTypes: 'Season', EnableImages: false, EnableUserData: false }),
-  ]);
-  const series = list(seriesR);
-  const localMax = new Map();
-  for (const s of list(seasonsR)) {
-    if (!s.SeriesId || !(s.IndexNumber > 0)) continue;
-    localMax.set(s.SeriesId, Math.max(localMax.get(s.SeriesId) || 0, s.IndexNumber));
-  }
+  const series = list((await Promise.allSettled([
+    bg({ Ids: chosen.join(','), Fields: 'ProviderIds,OriginalTitle', EnableImages: false }),
+  ]))[0]);
+
+  // Seasons really on the NAS. Jellyfin can also list seasons it knows about but you don't have
+  // ("missing" seasons, when it is set to show missing episodes): those must not count.
+  const seasonsOnDisk = async (seriesId) => {
+    const r = await api.req(`/Shows/${seriesId}/Seasons`, {
+      background: true, timeout: 30000, query: { userId: api.userId, isMissing: false, EnableImages: false, EnableUserData: false },
+    });
+    return Math.max(0, ...(r?.Items || []).filter((x) => x.IndexNumber > 0).map((x) => x.IndexNumber));
+  };
 
   const found = [];
   const now = today();
+  let checked = 0;
   for (const s of series) {
-    const have = localMax.get(s.Id) || 0;
-    if (!have) continue;
     try {
+      const have = await seasonsOnDisk(s.Id);
+      if (!have) continue;
       const id = await tvmazeId(s);
-      if (!id) continue;
+      if (!id) { log(`temporadas ${s.Name}: no está en TVmaze`); continue; }
+      checked++;
       const seasons = await tvmaze(`/shows/${id}/seasons`);
       const aired = (seasons || []).filter((x) => x.number > 0 && x.premiereDate && x.premiereDate <= now);
       const newest = aired.reduce((m, x) => (x.number > m.number ? x : m), { number: 0 });
+      log(`temporadas ${s.Name}: en el NAS ${have}, emitidas ${newest.number}`);
       if (newest.number > have) {
         const first = aired.find((x) => x.number === have + 1) || newest;
         found.push({
@@ -103,19 +120,21 @@ async function runCheck() {
     }
     await new Promise((r) => setTimeout(r, 350)); // TVmaze allows ~20 calls every 10 s
   }
+  log(`temporadas: ${series.length} series, ${checked} en TVmaze, ${found.length} con temporada nueva`);
+  lastSummary = { series: series.length, checked, found: found.length };
   return found;
 }
 
 // The cached answer, refreshed in the background when it is older than 12 hours.
 export function newSeasons({ force = false } = {}) {
   const serverId = store.get('activeServer');
-  const cached = store.get('seasonCheck');
+  const cached = store.get('seasonCheck2');
   const fresh = cached && cached.serverId === serverId && Date.now() - cached.at < CHECK_MS;
   if (fresh && !force) return Promise.resolve(visible(cached.found));
   if (!running) {
     running = runCheck()
       .then((found) => {
-        store.set('seasonCheck', { at: Date.now(), serverId, found });
+        store.set('seasonCheck2', { at: Date.now(), serverId, found, summary: lastSummary });
         return found;
       })
       .catch((e) => {
