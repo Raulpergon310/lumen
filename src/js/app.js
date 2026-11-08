@@ -1,7 +1,7 @@
 import { IS_TV } from './tv.js';
-import { startTvPlayback } from './tv-player.js';
+import { startTvPlayback, finishVlcSession } from './tv-player.js';
 import { store, log } from './store.js';
-import { Api, findReachable } from './api.js';
+import { Api, findReachable, probeServer } from './api.js';
 import { ctx } from './context.js';
 import { h, toast, spinner, button } from './ui.js';
 import { renderNav, updateNav } from './nav.js';
@@ -129,10 +129,21 @@ async function start() {
 
   const api = new Api({ url: reach.url, token: server.token, userId: server.userId, deviceId: store.get('deviceId') });
   let lastSlowWarning = 0;
-  api.onNetworkError = () => {
-    if (Date.now() - lastSlowWarning < 30000) return;
-    lastSlowWarning = Date.now();
-    toast('El servidor no responde. Puede estar saturado o reiniciándose.', 'error');
+  // One slow answer isn't a blocked server: check with the lightest question there is before
+  // warning (a request can time out just waiting its turn behind posters and long queries).
+  let checking = false;
+  api.onNetworkError = async (err) => {
+    if (checking || Date.now() - lastSlowWarning < 30000) return;
+    checking = true;
+    log(`network: ${err?.message}`);
+    try {
+      await probeServer(api.url, 8000);
+    } catch {
+      lastSlowWarning = Date.now();
+      toast('El servidor no responde. Puede estar saturado o reiniciándose.', 'error');
+    } finally {
+      checking = false;
+    }
   };
   // After playback the server's new position arrives: update the page in place.
   api.onDataChanged = () => { if (!ctx.player) ctx.refresh({ quiet: true }); };
@@ -167,6 +178,8 @@ async function start() {
   window.addEventListener('hashchange', onRoute);
   if (!location.hash || location.hash === '#' || location.hash.startsWith('#/connect')) location.replace('#/home');
   onRoute();
+  // Android TV: VLC may have answered while the app was being reloaded; report where it stopped.
+  if (IS_TV) finishVlcSession();
 }
 
 // ---------- router ----------

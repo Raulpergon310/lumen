@@ -36,11 +36,13 @@ export async function mpvAvailable() {
 const probes = new Map();
 const PROBE_MS = 3 * 60 * 1000;
 
-export function probeInfo(item) {
+// ahead: asked before the user presses play (detail page, hovering a card) — it waits its turn in
+// the background queue. Pressing play never waits behind that queue.
+export function probeInfo(item, { ahead = false } = {}) {
   const api = ctx.api;
   const hit = probes.get(item.Id);
-  if (hit && hit.api === api && Date.now() - hit.t < PROBE_MS) return hit.p;
-  const p = api.playbackInfo(item.Id, {
+  if (hit && hit.api === api && Date.now() - hit.t < PROBE_MS && (hit.done || !hit.ahead || ahead)) return hit.p;
+  const body = {
     UserId: api.userId,
     DeviceProfile: deviceProfile(store.get('maxBitrate', 0) || undefined),
     MaxStreamingBitrate: 200_000_000,
@@ -48,23 +50,32 @@ export function probeInfo(item) {
     EnableDirectStream: false,
     EnableTranscoding: false,
     IsPlayback: false,
-  });
-  probes.set(item.Id, { t: Date.now(), p, api });
-  p.catch(() => probes.delete(item.Id));
+  };
+  const p = ahead ? api.playbackInfoAhead(item.Id, body) : api.playbackInfo(item.Id, body);
+  const entry = { t: Date.now(), p, api, ahead, done: false };
+  probes.set(item.Id, entry);
+  p.then(() => { entry.done = true; }, () => { if (probes.get(item.Id) === entry) probes.delete(item.Id); });
   return p;
 }
 
 export async function probeSource(item) {
-  const info = await probeInfo(item);
+  const info = await probeInfo(item, { ahead: true });
   return info?.MediaSources?.[0] || null;
 }
 
 // Wake the NAS disk and pull the file's header and index (MKV keeps it at the end) into its cache
 // while the user is still looking at the detail page, so pressing play starts without a cold read.
+// One at a time, and not on the TV (VLC and the WebView read the file themselves).
 const warmed = new Set();
+let warming = false;
 export async function warmFile(item) {
-  if (warmed.has(item.Id)) return;
+  if (warmed.has(item.Id) || warming || window.LumenTV) return;
   warmed.add(item.Id);
+  warming = true;
+  try { await warmRanges(item); } finally { warming = false; }
+}
+
+async function warmRanges(item) {
   const api = ctx.api;
   const url = api.buildUrl(`/Videos/${item.Id}/stream`, { static: true, api_key: api.token });
   for (const range of ['bytes=0-1048575', 'bytes=-1048576']) {
@@ -191,6 +202,12 @@ class MpvSession {
     if (this.running) {
       await host.mpv.command(['loadfile', url, 'replace', -1, encodeOpts(opts)]);
     } else {
+      // HDR film: switch Windows to HDR first, so mpv starts with a real HDR output.
+      if (isHdr(ms) && store.get('autoHdr', true) && host.hdr) {
+        this.renderOverlay('Activando HDR…');
+        const r = await host.hdr.enable().catch(() => null);
+        if (r?.state === 'enabled') this.renderOverlay('Abriendo…');
+      }
       const args = Object.entries(opts).filter(([, v]) => v !== undefined).map(([k, v]) => `--${k}=${v}`);
       this.running = true;
       await host.mpv.start(['--idle=yes', ...args, '--', url], { embed: store.get('mpvEmbedded', true) });
@@ -242,6 +259,7 @@ class MpvSession {
         else if (e.name === 'duration' && e.data) this.duration = e.data;
         else if (e.name === 'pause') { this.paused = !!e.data; if (this.loaded) this.report('progress'); }
         else if (e.name === 'volume') this.volume = e.data;
+        else if (e.name === 'video-out-params/gamma' || e.name === 'video-target-params/gamma') this.onColor(e.name, e.data);
         else if (e.name === 'mute') this.muted = !!e.data;
         break;
       case 'client-message':
@@ -285,6 +303,26 @@ class MpvSession {
         this.nextAnnounced = true;
         this.ui({ upNext: { title: `${episodeLabel(this.next)}  ${this.next.Name}`, art: thumbSrc(ctx.api, this.next, 480) } });
       }
+    }
+  }
+
+  // HDR: says whether the picture goes out as real HDR or converted to SDR (and logs it), so it's
+  // clear what the screen is getting.
+  onColor(name, gamma) {
+    if (name === 'video-out-params/gamma') this.srcGamma = gamma;
+    else this.outGamma = gamma;
+    const hdr = (g) => /^(pq|hlg)$/i.test(g || '');
+    if (!hdr(this.srcGamma) || !this.outGamma) return;
+    const key = `${this.srcGamma}>${this.outGamma}`;
+    if (key === this.colorKey) return;
+    this.colorKey = key;
+    const real = hdr(this.outGamma);
+    log(`mpv hdr ${this.item?.Id}: ${key}`);
+    const base = describeSource(this.ms, this.audioIndex);
+    this.ui({ modeDetail: `${base} · ${real ? 'HDR real en la pantalla' : 'HDR convertido a SDR'}` });
+    if (!real && !store.get('hdrHintShown')) {
+      store.set('hdrHintShown', true);
+      this.osd('HDR convertido a SDR. Para verlo en HDR real, activa «Usar HDR» en Configuración de Windows > Pantalla.', 6000);
     }
   }
 
@@ -432,8 +470,14 @@ class MpvSession {
     this.off?.();
     this.overlay.remove();
     keepAwake(false);
+    host.hdr?.restore().catch(() => {});
     if (session === this) session = null;
   }
+}
+
+function isHdr(ms) {
+  const v = (ms.MediaStreams || []).find((s) => s.Type === 'Video');
+  return /HDR|HLG|DOVI/i.test(`${v?.VideoRangeType || ''} ${v?.VideoRange || ''}`);
 }
 
 // mpv loadfile options: values are length-prefixed so titles with commas survive.

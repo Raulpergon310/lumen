@@ -38,6 +38,8 @@ public class MainActivity extends Activity {
     private static final int VIEWPORT_WIDTH = 1280;
     private static final String VLC = "org.videolan.vlc";
     private static final int REQ_EXTERNAL = 42;
+    private static final String PREFS = "lumen";
+    private static final String KEY_RESULT = "external_result";
 
     private WebView web;
 
@@ -156,18 +158,28 @@ public class MainActivity extends Activity {
         return super.dispatchKeyEvent(event);
     }
 
-    // VLC hands back where playback stopped; the web UI reports it to Jellyfin.
+    // VLC hands back where playback stopped. The answer is saved before the web UI hears about it:
+    // when VLC switches the TV to 4K/HDR Android may recreate (or kill) this activity, and the page
+    // that started playback is gone. The reloaded page picks the saved answer up (takeExternalResult).
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != REQ_EXTERNAL) return;
-        long pos = data != null ? data.getLongExtra("extra_position", -1) : -1;
-        long dur = data != null ? data.getLongExtra("extra_duration", -1) : -1;
-        externalDone(pos, dur, true);
+        externalDone(longExtra(data, "extra_position"), longExtra(data, "extra_duration"), true);
+    }
+
+    // Depending on the VLC version the values come as long or int.
+    private static long longExtra(Intent data, String key) {
+        if (data == null || data.getExtras() == null) return -1;
+        Object v = data.getExtras().get(key);
+        return v instanceof Number ? ((Number) v).longValue() : -1;
     }
 
     private void externalDone(long pos, long dur, boolean ok) {
-        web.evaluateJavascript("window.lumenTvExternalDone && lumenTvExternalDone(" + pos + "," + dur + "," + ok + ")", null);
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString(KEY_RESULT, pos + "," + dur + "," + (ok ? 1 : 0) + "," + System.currentTimeMillis())
+                .commit();
+        if (web != null) web.evaluateJavascript("window.lumenTvExternalResult && lumenTvExternalResult()", null);
     }
 
     // PackageInstaller answers an update commit here (the activity is singleTask).
@@ -234,6 +246,15 @@ public class MainActivity extends Activity {
                     externalDone(-1, -1, false);
                 }
             });
+        }
+
+        // "posMs,durMs,ok,whenMs" of the last external playback, once (it is cleared on read).
+        @JavascriptInterface
+        public String takeExternalResult() {
+            android.content.SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
+            String r = p.getString(KEY_RESULT, "");
+            if (!r.isEmpty()) p.edit().remove(KEY_RESULT).commit();
+            return r;
         }
 
         @JavascriptInterface

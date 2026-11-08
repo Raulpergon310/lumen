@@ -49,7 +49,7 @@ export function attachCardActions(el, item) {
     hoverTimer = setTimeout(() => {
       ctx.api?.item(item.Id).catch(() => {});
       // Resting on something playable also asks about the file, so its play button starts at once.
-      if (['Movie', 'Episode'].includes(item.Type)) import('./mpv-player.js').then((m) => m.probeInfo(item)).catch(() => {});
+      if (['Movie', 'Episode'].includes(item.Type)) import('./mpv-player.js').then((m) => m.probeInfo(item, { ahead: true })).catch(() => {});
     }, 350);
   });
   el.addEventListener('pointerleave', () => { clearTimeout(hoverTimer); cancel(); });

@@ -62,6 +62,26 @@ export function findReachable(urls, timeout = 5000) {
   });
 }
 
+// Requests nobody is waiting for (recommendations, look-ahead) go through a small queue, so they
+// never take the browser's few connections to the server away from what's on screen, and the NAS
+// isn't asked a dozen heavy questions at once.
+const BACKGROUND_SLOTS = 2;
+let backgroundBusy = 0;
+const backgroundQueue = [];
+function inBackground(fn) {
+  return new Promise((resolve, reject) => {
+    const run = () => {
+      backgroundBusy++;
+      fn().then(resolve, reject).finally(() => {
+        backgroundBusy--;
+        backgroundQueue.shift()?.();
+      });
+    };
+    if (backgroundBusy < BACKGROUND_SLOTS) run();
+    else backgroundQueue.push(run);
+  });
+}
+
 export class Api {
   constructor({ url, token = null, userId = null, deviceId }) {
     this.url = url;
@@ -97,7 +117,7 @@ export class Api {
     const key = this.buildUrl(path, opts.query);
     const hit = this.cache.get(key);
     if (hit && !opts.fresh && Date.now() - hit.t < CACHE_MS) return hit.p;
-    const p = this.send(path, opts);
+    const p = opts.background ? inBackground(() => this.send(path, { ...opts, quiet: true })) : this.send(path, opts);
     this.cache.set(key, { t: Date.now(), p });
     p.catch(() => { if (this.cache.get(key)?.p === p) this.cache.delete(key); });
     return p;
@@ -111,7 +131,8 @@ export class Api {
     for (const key of [...this.cache.keys()]) if (test(key)) this.cache.delete(key);
   }
 
-  async send(path, { method = 'GET', query, body, timeout = 15000 } = {}) {
+  // quiet: a failure of this request is not worth telling the user about (look-ahead, recommendations).
+  async send(path, { method = 'GET', query, body, timeout = 15000, quiet = false } = {}) {
     const headers = { Authorization: this.authHeader() };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     let r;
@@ -122,7 +143,7 @@ export class Api {
         body: body !== undefined ? JSON.stringify(body) : undefined,
       }, timeout);
     } catch (e) {
-      this.onNetworkError?.(e);
+      if (!quiet) this.onNetworkError?.(e);
       throw e;
     }
     if (r.status === 401) {
@@ -226,7 +247,7 @@ export class Api {
   }
 
   async similar(id) {
-    const r = await this.req(`/Items/${id}/Similar`, { query: { userId: this.userId, Limit: 16, Fields: LIST_FIELDS, ...IMAGE_QUERY } });
+    const r = await this.req(`/Items/${id}/Similar`, { background: true, timeout: 30000, query: { userId: this.userId, Limit: 16, Fields: LIST_FIELDS, ...IMAGE_QUERY } });
     return r.Items || [];
   }
 
@@ -254,14 +275,20 @@ export class Api {
     return this.send(`/Items/${id}/PlaybackInfo`, { method: 'POST', query: { userId: this.userId }, body, timeout: 30000 });
   }
 
+  // The same, asked ahead of time (detail page, hovering a card): waits its turn and never warns.
+  playbackInfoAhead(id, body) {
+    return inBackground(() => this.send(`/Items/${id}/PlaybackInfo`, { method: 'POST', query: { userId: this.userId }, body, timeout: 30000, quiet: true }));
+  }
+
   report(kind, body) {
     const path = { start: '/Sessions/Playing', progress: '/Sessions/Playing/Progress', stop: '/Sessions/Playing/Stopped' }[kind];
     const p = this.send(path, { method: 'POST', body, timeout: 8000 }).catch(() => {});
     // Once the server has the final position, drop only what depends on it (Seguir viendo,
-    // A continuación, that item) and let the page update itself; everything else stays cached.
+    // A continuación, Novedades, the series' episode lists, that item) and let the page update
+    // itself; everything else stays cached.
     if (kind === 'stop') {
       p.then(() => {
-        this.invalidate((url) => /Resume|NextUp|Latest|UserItems|UserData/i.test(url) || url.includes(body.ItemId));
+        this.invalidate((url) => /Resume|NextUp|Latest|UserItems|UserData|\/Shows\/|IsPlayed|IsResumable/i.test(url) || url.includes(body.ItemId));
         this.onDataChanged?.();
       });
     }

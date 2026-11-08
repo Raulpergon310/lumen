@@ -30,6 +30,7 @@ export async function itemView({ params: [id], query, isStale }) {
   const header = h('section', { class: 'detail-head' });
   page.append(header);
   renderHeader(header, item);
+  if (item.Type === 'Series') import('../seasons.js').then((m) => m.seriesNote(item, header)).catch(() => {});
 
   if (item.Type === 'Series') {
     page.append(await seriesSection(item, query.season));
@@ -123,6 +124,12 @@ function renderHeader(header, item) {
   };
   const imagesBtn = h('button', { class: 'round-btn', title: 'Cambiar póster e imágenes', html: icons.image, onclick: () => openImagePicker(item, { onChanged: () => ctx.refresh() }) });
   actions.append(playedBtn, favBtn, imagesBtn);
+  if (item.Type === 'Movie' || item.Type === 'Episode') {
+    actions.append(h('button', {
+      class: 'round-btn', title: 'Subtítulos: elegir o buscar antes de reproducir', html: icons.subtitles,
+      onclick: () => import('../subpicker.js').then((m) => m.openSubtitlePicker(item)),
+    }));
+  }
   if (isEp && item.SeriesId) {
     actions.append(button('Ver serie', { onclick: () => { location.hash = `#/item/${item.SeriesId}?season=${item.SeasonId || ''}`; } }));
   }

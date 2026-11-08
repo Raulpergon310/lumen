@@ -58,18 +58,67 @@ function openVlc(item, ms, { fromStart = false, startSec } = {}) {
   const subUrl = sub ? api.buildUrl(`/Videos/${item.Id}/${ms.Id}/Subtitles/${sub.Index}/0/Stream.${sub.Codec === 'ass' ? 'ass' : 'srt'}`, { api_key: api.token }) : '';
   const title = item.Type === 'Episode' ? `${item.SeriesName} — ${item.Name}` : item.Name;
 
-  const base = { ItemId: item.Id, MediaSourceId: ms.Id, PlaySessionId: playSessionId, PlayMethod: 'DirectPlay', CanSeek: true };
-  api.report('start', { ...base, PositionTicks: Math.round(start * TICKS) });
+  // Saved before VLC opens: if Android recreates the app while VLC plays (it does when VLC switches the
+  // TV to 4K/HDR), the reloaded page still knows what was playing and reports where it stopped.
+  const pending = {
+    itemId: item.Id, mediaSourceId: ms.Id, playSessionId, start,
+    runtime: (item.RunTimeTicks || 0) / TICKS, at: Date.now(), serverId: store.get('activeServer'),
+  };
+  store.set('vlcPending', pending);
+  try { window.LumenTV.takeExternalResult?.(); } catch {} // drop any stale answer
+  api.report('start', { ...reportBase(pending), PositionTicks: Math.round(start * TICKS) });
 
   return new Promise((resolve) => {
-    window.lumenTvExternalDone = (posMs, durMs, ok) => {
-      window.lumenTvExternalDone = null;
-      if (!ok) toast('No se pudo abrir VLC', 'error');
-      // VLC reports -1/0 when it couldn't tell; then the saved position stays as it was.
-      const ticks = posMs > 0 ? posMs * 1e4 : Math.round(start * TICKS);
-      api.report('stop', { ...base, PositionTicks: ticks });
-      resolve();
-    };
+    vlcDone = resolve;
     window.LumenTV.playExternal(url, title, Math.round(start * 1000), subUrl);
   });
 }
+
+let vlcDone = null;
+
+function reportBase(p) {
+  return { ItemId: p.itemId, MediaSourceId: p.mediaSourceId, PlaySessionId: p.playSessionId, PlayMethod: 'DirectPlay', CanSeek: true };
+}
+
+// Where VLC stopped, in seconds. VLC reports -1/0 when it couldn't tell (some versions do that when the
+// film ends): then, if it was open about as long as what was left, the film was finished; otherwise
+// the saved position stays as it was.
+function stoppedAt(p, posMs, durMs, wallMs) {
+  if (posMs > 0) {
+    const dur = durMs > 0 ? durMs / 1000 : p.runtime;
+    // Stopped in the credits: count it as watched.
+    if (dur && posMs / 1000 >= dur - Math.min(180, dur * 0.05)) return dur;
+    return posMs / 1000;
+  }
+  const left = p.runtime - p.start;
+  if (p.runtime && left > 0 && wallMs >= left * 1000 * 0.9) return p.runtime;
+  return p.start;
+}
+
+// Called by the Android side when VLC answers, and on startup (the answer may have arrived while the
+// page was being reloaded). Safe to call any time: does nothing without a pending VLC session.
+export async function finishVlcSession() {
+  const p = store.get('vlcPending');
+  let raw = '';
+  try { raw = window.LumenTV?.takeExternalResult?.() || ''; } catch {}
+  if (!p) return;
+  if (!raw) {
+    // No answer yet (VLC still open, or it was left with Home): keep waiting, but not forever.
+    if (Date.now() - p.at > 12 * 3600 * 1000) store.set('vlcPending', undefined);
+    return;
+  }
+  const [posMs, durMs, ok, when] = raw.split(',').map(Number);
+  store.set('vlcPending', undefined);
+  const done = vlcDone;
+  vlcDone = null;
+  if (!ok) toast('No se pudo abrir VLC', 'error');
+  const api = ctx.api;
+  if (api && p.serverId === store.get('activeServer')) {
+    const sec = ok ? stoppedAt(p, posMs, durMs, (when || Date.now()) - p.at) : p.start;
+    log(`vlc stop ${p.itemId} pos=${posMs} dur=${durMs} -> ${Math.round(sec)}s`);
+    await api.report('stop', { ...reportBase(p), PositionTicks: Math.round(sec * TICKS) });
+  }
+  done?.();
+}
+
+if (window.LumenTV) window.lumenTvExternalResult = () => { finishVlcSession(); };

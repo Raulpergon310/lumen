@@ -4,6 +4,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { resolveAppPath, mimeFor } = require('./paths');
 const { setupUpdates } = require('./updater');
+const hdr = require('./hdr');
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
@@ -89,7 +90,7 @@ function mpvSend(evt) {
   if (overlay && !overlay.isDestroyed()) overlay.webContents.send('mpv:event', evt);
 }
 
-const MPV_PROPS = ['time-pos', 'duration', 'pause', 'aid', 'sid', 'volume', 'mute', 'eof-reached', 'track-list', 'demuxer-cache-time', 'paused-for-cache'];
+const MPV_PROPS = ['time-pos', 'duration', 'pause', 'aid', 'sid', 'volume', 'mute', 'eof-reached', 'track-list', 'demuxer-cache-time', 'paused-for-cache', 'video-out-params/gamma', 'video-target-params/gamma'];
 
 function mpvCommand(command) {
   if (!mpv?.sock || mpv.sock.destroyed) return false;
@@ -295,6 +296,7 @@ ipcMain.handle('mpv:start', (_e, args, { embed = false } = {}) => {
     if (mpv === state) {
       mpv = null;
       closeOverlay();
+      hdr.restore(log);
     }
     mpvSend({ event: 'process-exit', code, stderr: stderrTail.slice(-600) });
   });
@@ -304,6 +306,22 @@ ipcMain.handle('mpv:start', (_e, args, { embed = false } = {}) => {
 });
 
 ipcMain.handle('mpv:command', (_e, command) => mpvCommand(command));
+
+// HDR film about to start: switch on Windows HDR for the screen the app is on (see hdr.js).
+// It is switched off again when mpv closes, only if Lumen switched it on.
+ipcMain.handle('hdr:enable', async () => {
+  if (!win || win.isDestroyed()) return { state: 'none' };
+  const b = win.getBounds();
+  const centre = { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) };
+  const point = screen.dipToScreenPoint ? screen.dipToScreenPoint(centre) : centre;
+  try {
+    return await hdr.enable(point, log);
+  } catch (e) {
+    log('hdr:', e.message);
+    return { state: 'failed' };
+  }
+});
+ipcMain.handle('hdr:restore', () => hdr.restore(log));
 ipcMain.handle('mpv:stop', () => {
   if (!mpv) return;
   // Leave the video right away; mpv finishes shutting down in the background.
@@ -414,5 +432,8 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => app.quit());
-app.on('will-quit', () => { if (mpv) { try { mpv.proc.kill(); } catch {} } });
+app.on('will-quit', () => {
+  if (mpv) { try { mpv.proc.kill(); } catch {} }
+  hdr.restore(log);
+});
 process.on('uncaughtException', (e) => log('uncaughtException', e.stack || e.message));

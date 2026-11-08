@@ -78,6 +78,7 @@ export function settingsView() {
       h('h2', null, 'Reproducción'),
       window.LumenTV ? select('player', 'auto', 'Reproductor', [['auto', 'Automático (recomendado)'], ['builtin', 'Siempre la app']], 'Automático: la app reproduce hasta 1080p (con saltar intro y siguiente episodio) y VLC se encarga del 4K, HDR y formatos raros.') : null,
       window.lumenHost ? select('player', 'auto', 'Reproductor', [['auto', 'Automático (recomendado)'], ['builtin', 'Siempre la app'], ['mpv', 'Siempre mpv']], 'Automático: la app reproduce lo compatible y mpv se encarga del HDR, Dolby Vision, DTS/TrueHD/Atmos y formatos raros.') : null,
+      window.lumenHost ? toggle('autoHdr', true, 'Activar el HDR de Windows con las películas HDR', 'Lo enciende al empezar una película o serie HDR y lo vuelve a apagar al terminar (solo si lo encendió Lumen). Así el escritorio se ve como siempre.') : null,
       toggle('allowTranscode', false, 'Convertir en el servidor sin preguntar', 'Si está apagado, la app avisa cuando un archivo no se puede reproducir en directo.'),
       select('maxBitrate', 0, 'Calidad al convertir', QUALITIES, 'Solo se usa cuando el servidor convierte el vídeo.'),
       toggle('autoplayNext', true, 'Reproducir el siguiente episodio automáticamente'),

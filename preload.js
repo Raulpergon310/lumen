@@ -29,6 +29,11 @@ contextBridge.exposeInMainWorld('lumenHost', {
     close: () => ipcRenderer.send('win:close'),
     moveBy: (dx, dy) => ipcRenderer.send('win:move-by', dx, dy),
   },
+  // Windows HDR switched on for HDR films (and back off afterwards).
+  hdr: {
+    enable: () => ipcRenderer.invoke('hdr:enable'),
+    restore: () => ipcRenderer.invoke('hdr:restore'),
+  },
   mpv: {
     available: () => ipcRenderer.invoke('mpv:available'),
     start: (args, opts) => ipcRenderer.invoke('mpv:start', args, opts),

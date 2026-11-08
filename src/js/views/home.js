@@ -24,13 +24,18 @@ export async function homeView({ isStale }) {
   // Recommendations load after the page is on screen, so they never slow down opening the app.
   const forYou = h('div', { class: 'rec-slot' });
   const discover = h('div', { class: 'rec-slot' });
+  // Lo de siempre arriba (seguir viendo, temporadas nuevas, lo recién añadido); las recomendaciones
+  // y los «Porque viste…» al final.
+  const newSeasons = h('div', { class: 'rec-slot' });
   const rows = [
     row('Seguir viendo', resumeItems, { kind: 'thumb' }),
     row('A continuación', nextUpItems, { kind: 'thumb' }),
-    forYou,
+    newSeasons,
     ...libs.map((v, i) => row(`Novedades en ${v.Name}`, val(latest[i]), { href: `#/library/${v.Id}` })),
     discover,
+    forYou,
   ].filter(Boolean);
+  import('../seasons.js').then((m) => m.newSeasonsRow(newSeasons)).catch(() => newSeasons.remove());
   loadRecommendations(libs, forYou, discover);
 
   const heroPool = [...libs.flatMap((_, i) => val(latest[i]).slice(0, 4))]
@@ -53,6 +58,9 @@ async function loadRecommendations(libs, forYou, discover) {
   const movieLib = libs.find((v) => v.CollectionType === 'movies');
   const seriesLib = libs.find((v) => v.CollectionType === 'tvshows');
   const common = { Recursive: true, Fields: 'PrimaryImageAspectRatio', Limit: 20 };
+  // Let the rows on screen and their posters load first.
+  await new Promise((r) => setTimeout(r, 1500));
+  const bg = (q) => api.req('/Items', { background: true, timeout: 30000, query: { userId: api.userId, ...q } });
 
   // "Porque viste…": rows built here instead of /Movies/Recommendations, which always starts from the
   // same last-watched titles and so showed the same rows every day.
@@ -61,10 +69,10 @@ async function loadRecommendations(libs, forYou, discover) {
     .catch(() => forYou.remove());
 
   const lists = await Promise.allSettled([
-    movieLib && api.items({ ...common, ParentId: movieLib.Id, IncludeItemTypes: 'Movie', Filters: 'IsUnplayed', SortBy: 'CommunityRating', SortOrder: 'Descending', MinCommunityRating: 7 }),
-    seriesLib && api.items({ ...common, ParentId: seriesLib.Id, IncludeItemTypes: 'Series', Filters: 'IsUnplayed', SortBy: 'CommunityRating', SortOrder: 'Descending', MinCommunityRating: 7 }),
-    api.items({ ...common, IncludeItemTypes: 'Movie,Series', Filters: 'IsUnplayed', SortBy: 'Random' }),
-    api.items({ ...common, IncludeItemTypes: 'Movie,Series', Filters: 'IsFavorite', SortBy: 'Random' }),
+    movieLib && bg({ ...common, ParentId: movieLib.Id, IncludeItemTypes: 'Movie', Filters: 'IsUnplayed', SortBy: 'CommunityRating', SortOrder: 'Descending', MinCommunityRating: 7 }),
+    seriesLib && bg({ ...common, ParentId: seriesLib.Id, IncludeItemTypes: 'Series', Filters: 'IsUnplayed', SortBy: 'CommunityRating', SortOrder: 'Descending', MinCommunityRating: 7 }),
+    bg({ ...common, IncludeItemTypes: 'Movie,Series', Filters: 'IsUnplayed', SortBy: 'Random' }),
+    bg({ ...common, IncludeItemTypes: 'Movie,Series', Filters: 'IsFavorite', SortBy: 'Random' }),
   ]);
   const items = (r) => (r.status === 'fulfilled' && r.value ? r.value.Items : []);
   const made = [
@@ -93,10 +101,11 @@ async function becauseYouWatched(api) {
 
 async function buildBecauseRows(api) {
   const common = { Recursive: true, Limit: 30, SortBy: 'DatePlayed', SortOrder: 'Descending', Filters: 'IsPlayed' };
+  const bg = (q) => api.req('/Items', { background: true, timeout: 30000, query: { userId: api.userId, ...q } });
   const [movies, episodes, favs] = await Promise.allSettled([
-    api.items({ ...common, IncludeItemTypes: 'Movie' }),
-    api.items({ ...common, IncludeItemTypes: 'Episode', Limit: 80 }),
-    api.items({ Recursive: true, IncludeItemTypes: 'Movie,Series', Filters: 'IsFavorite', Limit: 40 }),
+    bg({ ...common, IncludeItemTypes: 'Movie' }),
+    bg({ ...common, IncludeItemTypes: 'Episode', Limit: 80 }),
+    bg({ Recursive: true, IncludeItemTypes: 'Movie,Series', Filters: 'IsFavorite', Limit: 40 }),
   ]);
   const list = (r) => (r.status === 'fulfilled' && r.value ? r.value.Items || [] : []);
 
@@ -113,8 +122,9 @@ async function buildBecauseRows(api) {
   if (fav && Math.random() < 0.6) seeds.push({ id: fav.Id, name: fav.Name, title: `Porque te gustó ${fav.Name}` });
 
   const used = new Set(seeds.map((x) => x.id));
+  // "Similar" is one of the heaviest questions for Jellyfin: they wait their turn (2 at a time).
   const similar = await Promise.allSettled(seeds.map((x) => api.req(`/Items/${x.id}/Similar`, {
-    query: { userId: api.userId, Limit: 30, Fields: 'PrimaryImageAspectRatio' },
+    background: true, timeout: 30000, query: { userId: api.userId, Limit: 30, Fields: 'PrimaryImageAspectRatio' },
   })));
   const rows = [];
   seeds.forEach((x, i) => {
