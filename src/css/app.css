@@ -732,3 +732,15 @@ a.person:hover .person-img { transform: scale(1.05); box-shadow: 0 0 0 3px rgba(
   font-weight: 700; background: #fff; color: #000; letter-spacing: .02em; }
 .new-season-note { display: inline-flex; align-items: center; gap: 8px; margin-top: 10px; padding: 8px 14px; border-radius: 12px;
   background: rgba(255, 255, 255, 0.12); font-size: 14px; }
+
+/* Identificar */
+.id-form-wrap { padding: 0 26px; }
+.id-form { display: grid; grid-template-columns: 1fr 96px 1fr auto; gap: 10px; align-items: center; }
+.id-form .field { margin: 0; }
+.id-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.id-choice { position: relative; text-align: left; }
+.id-name { font-weight: 600; font-size: 14px; margin-top: 8px; color: var(--text); }
+.id-choice.armed { outline: 2px solid #fff; outline-offset: 3px; border-radius: 12px; }
+.id-confirm { margin-top: 6px; font-size: 12.5px; font-weight: 600; color: #000; background: #fff; border-radius: 8px; padding: 4px 8px; }
+.id-choice.busy { opacity: 0.5; pointer-events: none; }
+@media (max-width: 720px) { .id-form { grid-template-columns: 1fr 80px; } .id-form .field:nth-child(3) { grid-column: 1 / -1; } }

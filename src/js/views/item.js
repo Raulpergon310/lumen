@@ -124,6 +124,12 @@ function renderHeader(header, item) {
   };
   const imagesBtn = h('button', { class: 'round-btn', title: 'Cambiar póster e imágenes', html: icons.image, onclick: () => openImagePicker(item, { onChanged: () => ctx.refresh() }) });
   actions.append(playedBtn, favBtn, imagesBtn);
+  if (['Movie', 'Series', 'BoxSet'].includes(item.Type)) {
+    actions.append(h('button', {
+      class: 'round-btn', title: 'Identificar: corregir qué película o serie es', html: icons.search,
+      onclick: () => import('../identify.js').then((m) => m.openIdentify(item)),
+    }));
+  }
   if (item.Type === 'Movie' || item.Type === 'Episode') {
     actions.append(h('button', {
       class: 'round-btn', title: 'Subtítulos: elegir o buscar antes de reproducir', html: icons.subtitles,

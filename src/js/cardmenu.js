@@ -88,7 +88,10 @@ export function showCardMenu(item, [x, y]) {
       : null,
     entry(ud.IsFavorite ? 'heartFill' : 'heart', ud.IsFavorite ? 'Quitar de favoritos' : 'Añadir a favoritos',
       run(async () => { await api.setFavorite(item.Id, !ud.IsFavorite); })),
-    entry('image', 'Cambiar póster', () => { closeMenu(); openImagePicker(item, { onChanged: () => ctx.refresh() }); }));
+    entry('image', 'Cambiar póster', () => { closeMenu(); openImagePicker(item, { onChanged: () => ctx.refresh() }); }),
+    ['Movie', 'Series', 'BoxSet'].includes(item.Type)
+      ? entry('search', 'Identificar', () => { closeMenu(); import('./identify.js').then((m) => m.openIdentify(item)); })
+      : null);
 
   document.body.append(menu);
   const r = menu.getBoundingClientRect();
