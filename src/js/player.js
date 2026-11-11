@@ -2,9 +2,9 @@ import { ctx } from './context.js';
 import { h, fmtTime, fmtEndsAt, episodeLabel, toast, image } from './ui.js';
 import { icons } from './icons.js';
 import { store, keepAwake, log } from './store.js';
-import { deviceProfile } from './profile.js';
+import { deviceProfile, capabilities, learnMkv, CONVERT_BITRATE } from './profile.js';
 import { thumbSrc } from './media.js';
-import { playbackPlan, onlyAudioConverted } from './compat.js';
+import { playbackPlan, onlyAudioConverted, keepsOriginalPicture, transcodeReasonList, IMAGE_SUBS } from './compat.js';
 import { chooseSubtitle } from './subs.js';
 import { mpvAvailable, openMpv, probeSource } from './mpv-player.js';
 import { IS_TV } from './tv.js';
@@ -199,6 +199,7 @@ class Player {
     this.knownPlan = plan;
     this.knownInfo = probe;
     this.forceTranscode = forceTranscode;
+    this.fellBack = false;
     this.upNextDismissed = false;
     this.skippedSegments.clear();
     this.renderTitle();
@@ -229,31 +230,46 @@ class Player {
     }
   }
 
-  async startStream({ startSec = 0, audioIndex, subIndex, forceTranscode = this.forceTranscode }) {
+  // The order is always: 1) the original file as-is; 2) the original picture repackaged by the server
+  // (only the container and, if needed, the audio change — cheap for the NAS); 3) only then, and only with
+  // the user's OK, a real conversion of the picture, capped at 1080p so the NAS can keep up.
+  async startStream({ startSec = 0, audioIndex, subIndex, forceTranscode = this.forceTranscode, noDirect = false }) {
     const api = ctx.api;
     this.hideError();
     this.setLoading(true);
     await this.teardownStream();
     if (this.closed) return;
 
-    const maxBitrate = store.get('maxBitrate', 0) || undefined;
-    const allowDirect = !forceTranscode && store.get('preferDirectPlay', true);
+    const convertOk = forceTranscode || store.get('allowTranscode', false);
+    const convertBitrate = store.get('maxBitrate', 0) || CONVERT_BITRATE;
+    const allowDirect = !forceTranscode && !noDirect && store.get('preferDirectPlay', true);
 
-    const request = (direct, audio, sub) => api.playbackInfo(this.item.Id, {
-      UserId: api.userId,
-      DeviceProfile: deviceProfile(maxBitrate),
-      MaxStreamingBitrate: maxBitrate || 200_000_000,
-      AudioStreamIndex: audio,
-      SubtitleStreamIndex: sub,
-      MediaSourceId: this.mediaSourceId,
-      EnableDirectPlay: direct,
-      EnableDirectStream: true,
-      EnableTranscoding: true,
-      AllowVideoStreamCopy: true,
-      AllowAudioStreamCopy: true,
-      AutoOpenLiveStream: true,
-      IsPlayback: true,
-    });
+    let asked = null;
+    const request = async (direct, audio, sub, convert = false) => {
+      asked = { direct, audio, sub, convert };
+      const res = await api.playbackInfo(this.item.Id, {
+        UserId: api.userId,
+        DeviceProfile: deviceProfile({ convert, maxBitrate: convertBitrate }),
+        // The bitrate only matters for a real conversion: with it set, the server would re-encode a
+        // file the app can play as-is just to make it smaller.
+        MaxStreamingBitrate: convert ? convertBitrate : 200_000_000,
+        AudioStreamIndex: audio,
+        SubtitleStreamIndex: sub,
+        MediaSourceId: this.mediaSourceId,
+        EnableDirectPlay: direct,
+        // Server-side work always comes back as an HLS address (TranscodingUrl); whether it copies the
+        // picture or re-encodes it is read from its reasons below.
+        EnableDirectStream: false,
+        EnableTranscoding: true,
+        AllowVideoStreamCopy: !convert || !forceTranscode,
+        AllowAudioStreamCopy: true,
+        AutoOpenLiveStream: true,
+        IsPlayback: true,
+      });
+      if (res.ErrorCode) throw new Error(playbackError(res.ErrorCode));
+      if (!res.MediaSources?.[0]) throw new Error('El servidor no devolvió ninguna fuente de vídeo.');
+      return res;
+    };
 
     // When the caller already knows only the audio needs converting, skip the direct-play round trip.
     const known = this.knownPlan;
@@ -264,36 +280,59 @@ class Player {
     // A file the app plays as-is can start from the answer the detail page already fetched.
     const reuse = firstDirect && known?.mode === 'direct' && knownInfo?.MediaSources?.[0] && audioIndex == null && subIndex == null;
     let info = reuse ? knownInfo : await request(firstDirect, audioIndex, subIndex);
-    if (info.ErrorCode) throw new Error(playbackError(info.ErrorCode));
-    let ms = info.MediaSources?.[0];
-    if (!ms) throw new Error('El servidor no devolvió ninguna fuente de vídeo.');
+    let ms = info.MediaSources[0];
 
     // Our own codec check decides (it ignores e.g. the server's remote bitrate cap). Files whose audio the
     // app can't decode (Dolby Digital, DTS…) or that use another audio track keep the original video and
     // only get their audio converted by the server.
     const wantedAudio = audioIndex ?? ms.DefaultAudioStreamIndex;
-    const plan = playbackPlan({ ...ms, DefaultAudioStreamIndex: wantedAudio, DefaultSubtitleStreamIndex: subIndex ?? ms.DefaultSubtitleStreamIndex });
+    const chosenSub = subIndex ?? chooseSubtitle(ms, wantedAudio).index ?? ms.DefaultSubtitleStreamIndex ?? -1;
+    // Image subtitles (PGS, DVD) would force the server to redraw the whole picture: without the OK to
+    // convert, a text version in the same language is used, or none.
+    const wantedSub = convertOk ? chosenSub : textSubtitleFor(ms, chosenSub);
+    const plan = playbackPlan({ ...ms, DefaultAudioStreamIndex: wantedAudio, DefaultSubtitleStreamIndex: wantedSub }, { external: false });
     const direct = allowDirect && plan.mode === 'direct';
-    if (!direct && firstDirect) {
-      info = await request(false, wantedAudio, subIndex);
-      if (info.ErrorCode) throw new Error(playbackError(info.ErrorCode));
+    if (!direct && (reuse || asked.direct || asked.audio !== wantedAudio || asked.sub !== wantedSub)) {
+      info = await request(false, wantedAudio, wantedSub);
       ms = info.MediaSources[0];
+    }
+    // Jellyfin burns in forced image subtitles even when asked for none, which means re-encoding the
+    // whole picture. Without the OK to convert, that part of the request is dropped.
+    if (!direct && !convertOk && /SubtitleMethod=Encode/i.test(ms.TranscodingUrl || '')) {
+      ms = { ...ms, TranscodingUrl: dropBurnIn(ms.TranscodingUrl) };
     }
     if (this.closed) return;
 
-    // Full video conversions need the user's OK; copying the original picture is always fine.
-    if (!direct && !ms.SupportsDirectStream && !onlyAudioConverted(ms.TranscodingUrl)
-      && !forceTranscode && !store.get('allowTranscode', false)) {
-      throw new NeedsTranscodeError(transcodeReasons(ms.TranscodingUrl));
+    let converting = false;
+    let streamUrl = null;
+    if (!direct) {
+      if (!ms.TranscodingUrl) throw new Error('El servidor no ofrece ninguna forma de enviar este vídeo.');
+      // Repackaging keeps the original picture: always fine. Play only the variant that copies it, never
+      // the H.264 re-encode Jellyfin lists next to it (the player would switch to it silently).
+      const keepsPicture = !forceTranscode && keepsOriginalPicture(ms.TranscodingUrl);
+      if (keepsPicture) streamUrl = await copyVariant(api.abs(ms.TranscodingUrl));
+      if (!streamUrl) {
+        if (!convertOk) {
+          throw new NeedsTranscodeError(transcodeReasons(keepsPicture ? 'VideoCodecNotSupported' : ms.TranscodingUrl, plan));
+        }
+        info = await request(false, wantedAudio, chosenSub, true);
+        ms = info.MediaSources[0];
+        if (!ms.TranscodingUrl) throw new Error('El servidor no puede convertir este vídeo.');
+        streamUrl = capResolution(api.abs(ms.TranscodingUrl));
+        converting = true;
+      }
     }
+    if (this.closed) return;
 
     this.info = info;
     this.ms = ms;
     this.mediaSourceId = ms.Id;
     this.playSessionId = info.PlaySessionId;
     this.audioIndex = wantedAudio;
-    this.subIndex = subIndex ?? chooseSubtitle(ms, wantedAudio).index ?? ms.DefaultSubtitleStreamIndex ?? -1;
-    this.burnedSub = !direct && /SubtitleMethod=Encode/i.test(ms.TranscodingUrl || '');
+    this.subIndex = converting ? chosenSub : wantedSub;
+    this.burnedSub = converting && /SubtitleMethod=Encode/i.test(ms.TranscodingUrl || '');
+    this.converting = converting;
+    this.streamUrl = streamUrl;
 
     const v = this.video;
     if (direct) {
@@ -306,19 +345,21 @@ class Player {
         Tag: ms.ETag,
         PlaySessionId: this.playSessionId,
       });
-      v.addEventListener('loadedmetadata', () => { if (startSec > 0) v.currentTime = startSec; }, { once: true });
+      const triesMkv = /mkv|matroska/i.test(ms.Container || '') && !capabilities().mkvNative;
+      v.addEventListener('loadedmetadata', () => {
+        if (startSec > 0) v.currentTime = startSec;
+        if (triesMkv && v.videoWidth > 0) learnMkv(true);
+      }, { once: true });
+      this.triesMkv = triesMkv;
       v.src = url;
       this.armDirectPlayWatchdog();
-    } else if (ms.TranscodingUrl) {
-      this.method = ms.SupportsDirectStream ? 'DirectStream' : 'Transcode';
-      const url = api.abs(ms.TranscodingUrl);
-      if (/\.m3u8/i.test(url) && window.Hls?.isSupported()) this.attachHls(url, startSec);
+    } else {
+      this.method = converting ? 'Transcode' : 'DirectStream';
+      if (/\.m3u8/i.test(streamUrl) && window.Hls?.isSupported()) this.attachHls(streamUrl, startSec);
       else {
         v.addEventListener('loadedmetadata', () => { if (startSec > 0) v.currentTime = startSec; }, { once: true });
-        v.src = url;
+        v.src = streamUrl;
       }
-    } else {
-      throw new Error('Este vídeo no se puede reproducir en este equipo.');
     }
 
     v.play().catch(() => {});
@@ -347,12 +388,14 @@ class Player {
       levelLoadingMaxRetry: 2,
       manifestLoadingMaxRetry: 1,
     });
-    // Jellyfin lists an H.264 re-encode before the variant that copies the original HEVC/AV1 picture.
-    // Start on the copy when this device can decode it: re-encoding 4K live is beyond most NAS boxes.
+    // Jellyfin lists an H.264 re-encode next to the variant that copies the original HEVC/AV1 picture.
+    // Stay on the copy when this device can decode it: re-encoding 4K live is beyond the NAS. (Normally
+    // only the copy reaches here — see copyVariant — but this also covers a master playlist.)
     hls.on(Hls.Events.MANIFEST_PARSED, (_e, data) => {
-      const canPlay = (l) => l.videoCodec && window.MediaSource?.isTypeSupported(`video/mp4; codecs="${l.videoCodec}"`);
-      const copy = data.levels.findIndex((l) => /^(hvc1|hev1|av01|vp09)/.test(l.videoCodec || '') && canPlay(l));
-      if (copy > 0) {
+      const canPlay = (l) => !l.videoCodec || window.MediaSource?.isTypeSupported(`video/mp4; codecs="${l.videoCodec}"`);
+      const isCopy = (l) => !/AllowVideoStreamCopy=false/i.test(String(l.url ?? l.uri ?? ''));
+      const copy = data.levels.findIndex((l) => isCopy(l) && canPlay(l));
+      if (copy >= 0 && data.levels.length > 1) {
         hls.startLevel = copy;
         hls.currentLevel = copy; // manual: both variants report the same bitrate, ABR must not swap back
       }
@@ -390,11 +433,13 @@ class Player {
     this.hls = hls;
   }
 
-  // Some files claim to be playable but never start; fall back to a server stream.
+  // Some files claim to be playable but never start; fall back to the server repackaging them.
+  // A slow connection isn't a reason: once the picture is known (metadata with a size), it's just loading.
   armDirectPlayWatchdog() {
     clearTimeout(this.watchdog);
     this.watchdog = setTimeout(() => {
-      if (this.method === 'DirectPlay' && this.video.readyState < 2 && !this.closed) {
+      const v = this.video;
+      if (this.method === 'DirectPlay' && !this.closed && (v.readyState < 1 || (v.readyState < 2 && !v.videoWidth))) {
         log('direct play stalled, using server stream');
         this.fallbackToTranscode();
       }
@@ -409,8 +454,13 @@ class Player {
     else this.fail('No se pudo reproducir el vídeo.');
   }
 
+  // The original file didn't start. Next best thing: the same picture repackaged by the server (light
+  // work for the NAS). A real conversion only comes after that, and only with the user's OK.
   async fallbackToTranscode() {
+    if (this.fellBack) return;
+    this.fellBack = true;
     const at = this.video.currentTime || 0;
+    if (this.triesMkv) learnMkv(false); // this device doesn't play MKV as-is: don't try it again
     // In automatic mode a file the app can't handle moves to mpv at the same spot.
     if (store.get('player', 'auto') === 'auto' && await mpvAvailable()) {
       const item = this.item;
@@ -419,11 +469,7 @@ class Player {
       openMpv(item, { startSec: at });
       return;
     }
-    if (!store.get('allowTranscode', false)) {
-      this.fail('Este archivo no arranca en reproducción directa en el reproductor integrado.', { offerTranscode: true });
-      return;
-    }
-    this.startStream({ startSec: at, audioIndex: this.audioIndex, subIndex: this.subIndex, forceTranscode: true })
+    this.startStream({ startSec: at, audioIndex: this.audioIndex, subIndex: this.subIndex, noDirect: true })
       .catch((e) => this.fail(e.message));
   }
 
@@ -527,6 +573,10 @@ class Player {
     this.toggleMenu(false);
     if (index === this.subIndex) return;
     const s = this.subtitleStreams().find((x) => x.Index === index);
+    if (s && IMAGE_SUBS.test(s.Codec || '') && !this.converting && !store.get('allowTranscode', false)) {
+      toast('Esos subtítulos son imágenes: para verlos el servidor tendría que convertir el vídeo. Elige unos de texto o activa «Convertir en el servidor sin preguntar» en Ajustes.');
+      return;
+    }
     const needsServer = (s && s.DeliveryMethod !== 'External') || this.burnedSub;
     if (needsServer) {
       this.restartAt({ subIndex: index });
@@ -861,18 +911,20 @@ class Player {
       kind = 'direct';
       label = 'Reproducción directa';
       detail = `Archivo original · ${[videoTxt, audioTxt].filter(Boolean).join(' · ')}`;
-    } else if (this.method === 'DirectStream') {
+    } else if (this.method === 'DirectStream' && !transcodeReasonList(ms.TranscodingUrl).some((r) => /^Audio/.test(r))) {
       kind = 'direct';
       label = 'Directo · reempaquetado';
       detail = `Imagen y sonido originales · ${[videoTxt, audioTxt].filter(Boolean).join(' · ')}`;
-    } else if (onlyAudioConverted(ms.TranscodingUrl)) {
+    } else if (this.method === 'DirectStream' || onlyAudioConverted(ms.TranscodingUrl)) {
       kind = 'audio';
       label = 'Imagen directa · audio convertido';
       detail = `Imagen original ${videoTxt} · audio ${audioTxt} → ${target}`;
     } else {
       kind = 'convert';
       label = 'Convertido en el servidor';
-      detail = transcodeReasons(ms.TranscodingUrl).split('.')[0].replace('El reproductor integrado no puede reproducir este archivo en directo', 'Motivo') || '';
+      const q = new URLSearchParams((this.streamUrl || '').split('?')[1] || '');
+      const why = [...new Set(transcodeReasonList(ms.TranscodingUrl).map((r) => REASONS[r]).filter(Boolean))].join(', ');
+      detail = [`Máx. ${q.get('MaxHeight') || 1080}p`, why && `motivo: ${why}`].filter(Boolean).join(' · ');
     }
     this.modeEl.className = `p-mode p-mode-${kind}`;
     this.modeEl.title = detail;
@@ -1025,6 +1077,70 @@ function languageName(code) {
 
 class NeedsTranscodeError extends Error {}
 
+// A text subtitle to use instead of an image one (same language, same forced-ness if possible), or -1.
+function textSubtitleFor(ms, index) {
+  const subs = (ms.MediaStreams || []).filter((s) => s.Type === 'Subtitle');
+  const s = subs.find((x) => x.Index === index);
+  if (!s || !IMAGE_SUBS.test(s.Codec || '')) return index;
+  const text = subs.filter((x) => !IMAGE_SUBS.test(x.Codec || '') && (x.Language || '') === (s.Language || ''));
+  const alt = text.find((x) => !!x.IsForced === !!s.IsForced) || (s.IsForced ? null : text[0]);
+  if (alt) return alt.Index;
+  toast('Los subtítulos de este archivo son imágenes y para verlos habría que convertir el vídeo: se reproduce sin ellos.');
+  return -1;
+}
+
+// From the HLS master playlist the server offers, the variant that copies the original picture (never
+// the H.264 re-encode next to it), if this device can decode it. Null when there is none.
+async function copyVariant(masterUrl) {
+  let text;
+  try {
+    const r = await fetch(masterUrl);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    text = await r.text();
+  } catch (e) {
+    log(`master playlist: ${e.message}`);
+    return masterUrl; // let the player read it; the level picker still prefers the copy
+  }
+  if (!/#EXT-X-STREAM-INF/i.test(text)) return masterUrl; // already a single stream
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const inf = lines[i].match(/^#EXT-X-STREAM-INF:(.*)$/i);
+    if (!inf) continue;
+    const uri = lines.slice(i + 1).find((l) => l && !l.startsWith('#'));
+    if (!uri || /AllowVideoStreamCopy=false/i.test(uri)) continue;
+    const video = (inf[1].match(/CODECS="([^"]*)"/i)?.[1] || '').split(',').map((c) => c.trim())
+      .find((c) => /^(avc|hvc|hev|av01|vp09|dvh|dvav)/i.test(c));
+    if (video && !canDecode(video)) continue;
+    return new URL(uri, masterUrl).href;
+  }
+  return null;
+}
+
+function canDecode(codec) {
+  const type = `video/mp4; codecs="${codec}"`;
+  try {
+    if (window.MediaSource?.isTypeSupported(type)) return true;
+  } catch {}
+  return document.createElement('video').canPlayType(type) !== '';
+}
+
+function dropBurnIn(url) {
+  const [path, query = ''] = url.split('?');
+  const q = new URLSearchParams(query);
+  for (const k of [...q.keys()]) if (/^Subtitle(StreamIndex|Method|Codec)$/i.test(k)) q.delete(k);
+  const reasons = (q.get('TranscodeReasons') || '').split(',').filter((r) => r && r !== 'SubtitleCodecNotSupported');
+  if (reasons.length) q.set('TranscodeReasons', reasons.join(','));
+  else q.delete('TranscodeReasons');
+  return `${path}?${q}`;
+}
+
+// A real conversion never goes above 1080p unless the user chose 4K quality: the NAS can't re-encode 4K.
+function capResolution(url) {
+  if (/[?&]MaxWidth=/i.test(url)) return url;
+  const fourK = (store.get('maxBitrate', 0) || 0) >= 40e6;
+  return `${url}${url.includes('?') ? '&' : '?'}MaxWidth=${fourK ? 3840 : 1920}&MaxHeight=${fourK ? 2160 : 1080}`;
+}
+
 const REASONS = {
   ContainerNotSupported: 'el formato del archivo',
   VideoCodecNotSupported: 'el códec de vídeo',
@@ -1039,11 +1155,17 @@ const REASONS = {
   VideoBitrateNotSupported: 'el límite de calidad del servidor',
 };
 
-function transcodeReasons(url) {
-  const raw = new URLSearchParams((url || '').split('?')[1] || '').get('TranscodeReasons') || '';
-  const parts = [...new Set(raw.split(',').map((r) => REASONS[r]).filter(Boolean))];
-  const why = parts.length ? ` por ${parts.join(', ')}` : '';
-  return `El reproductor integrado no puede reproducir este archivo en directo${why}. Con mpv (Ajustes → Reproductor) se reproduce sin convertir.`;
+// urlOrReason: the server's TranscodingUrl, or a single reason name.
+function transcodeReasons(urlOrReason, plan) {
+  const list = /^[A-Za-z]+$/.test(urlOrReason || '') ? [urlOrReason] : transcodeReasonList(urlOrReason);
+  const parts = [...new Set(list.map((r) => REASONS[r]).filter(Boolean))];
+  const why = plan?.videoUnsupported ? ` por ${plan.reason}` : parts.length ? ` por ${parts.join(', ')}` : '';
+  const fix = window.lumenHost
+    ? 'Con mpv (Ajustes → Reproductor) se reproduce sin convertir.'
+    : window.LumenTV
+      ? 'Con VLC instalado en la tele se reproduce sin convertir.'
+      : 'Prueba a abrir Lumen en Chrome, Edge o Safari, que reproducen HEVC sin convertir.';
+  return `Este equipo no puede reproducir este archivo en directo${why}, y convertirlo carga mucho el servidor. ${fix}`;
 }
 
 function playbackError(code) {

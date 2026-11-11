@@ -3,7 +3,7 @@ import { ctx } from '../context.js';
 import { store } from '../store.js';
 
 export const QUALITIES = [
-  [0, 'Automática (máxima)'],
+  [0, 'Automática (1080p · 8 Mbps)'],
   [60e6, '4K · 60 Mbps'],
   [20e6, '1080p · 20 Mbps'],
   [10e6, '1080p · 10 Mbps'],
@@ -105,8 +105,8 @@ export function settingsView() {
       window.LumenTV ? select('player', 'auto', 'Reproductor', [['auto', 'Automático (recomendado)'], ['builtin', 'Siempre la app']], 'Automático: la app reproduce hasta 1080p (con saltar intro y siguiente episodio) y VLC se encarga del 4K, HDR y formatos raros.') : null,
       window.lumenHost ? select('player', 'auto', 'Reproductor', [['auto', 'Automático (recomendado)'], ['builtin', 'Siempre la app'], ['mpv', 'Siempre mpv']], 'Automático: la app reproduce lo compatible y mpv se encarga del HDR, Dolby Vision, DTS/TrueHD/Atmos y formatos raros.') : null,
       window.lumenHost ? toggle('autoHdr', true, 'Activar el HDR de Windows con las películas HDR', 'Lo enciende al empezar una película o serie HDR y lo vuelve a apagar al terminar (solo si lo encendió Lumen). Así el escritorio se ve como siempre.') : null,
-      toggle('allowTranscode', false, 'Convertir en el servidor sin preguntar', 'Si está apagado, la app avisa cuando un archivo no se puede reproducir en directo.'),
-      select('maxBitrate', 0, 'Calidad al convertir', QUALITIES, 'Solo se usa cuando el servidor convierte el vídeo.'),
+      toggle('allowTranscode', false, 'Convertir en el servidor sin preguntar', 'Lumen siempre intenta primero el archivo original y luego la imagen original reempaquetada. Convertir la imagen es el último recurso: si está apagado, la app pregunta antes.'),
+      select('maxBitrate', 0, 'Calidad al convertir', QUALITIES, 'Solo se usa cuando el servidor tiene que convertir la imagen. Más calidad = más carga para el NAS.'),
       toggle('autoplayNext', true, 'Reproducir el siguiente episodio automáticamente'),
       toggle('autoSkipIntro', false, 'Saltar intros automáticamente', 'Requiere que el servidor tenga detectadas las intros.'),
     ),

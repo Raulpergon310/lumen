@@ -1,33 +1,53 @@
 // Builds a Jellyfin DeviceProfile from what this Chromium build can actually decode,
 // so the server only transcodes what is really needed.
+import { store } from './store.js';
+
 let cached = null;
+
+// Without a real conversion bitrate the server would re-encode at ~200 Mbps and full 4K: far too much
+// for the NAS. Conversions are 1080p at this bitrate unless the user picks another quality.
+export const CONVERT_BITRATE = 8_000_000;
+const DIRECT_BITRATE = 200_000_000;
 
 function mse(type) {
   try { return window.MediaSource?.isTypeSupported(type) || false; } catch { return false; }
 }
 
 export function capabilities() {
-  if (cached) return cached;
-  const v = document.createElement('video');
-  const can = (t) => v.canPlayType(t).replace('no', '') !== '';
-  const hevc = mse('video/mp4; codecs="hvc1.1.6.L120.90"') || mse('video/mp4; codecs="hev1.1.6.L120.90"');
-  const hevc10 = mse('video/mp4; codecs="hvc1.2.4.L120.90"') || mse('video/mp4; codecs="hev1.2.4.L120.90"');
-  cached = {
-    hevc,
-    hevc10,
-    av1: mse('video/mp4; codecs="av01.0.08M.08"'),
-    vp9: mse('video/webm; codecs="vp9"'),
-    mkv: can('video/x-matroska; codecs="avc1.640028, mp4a.40.2"') || can('video/x-matroska'),
-    flac: mse('audio/mp4; codecs="flac"'),
-    opus: mse('audio/mp4; codecs="opus"') || mse('audio/webm; codecs="opus"'),
-    ac3: mse('audio/mp4; codecs="ac-3"'),
-    eac3: mse('audio/mp4; codecs="ec-3"'),
-  };
+  if (!cached) {
+    const v = document.createElement('video');
+    const can = (t) => v.canPlayType(t).replace('no', '') !== '';
+    const hevc = mse('video/mp4; codecs="hvc1.1.6.L120.90"') || mse('video/mp4; codecs="hev1.1.6.L120.90"');
+    const hevc10 = mse('video/mp4; codecs="hvc1.2.4.L120.90"') || mse('video/mp4; codecs="hev1.2.4.L120.90"');
+    cached = {
+      hevc,
+      hevc10,
+      av1: mse('video/mp4; codecs="av01.0.08M.08"'),
+      vp9: mse('video/webm; codecs="vp9"'),
+      mkvNative: can('video/x-matroska; codecs="avc1.640028, mp4a.40.2"') || can('video/x-matroska'),
+      flac: mse('audio/mp4; codecs="flac"'),
+      opus: mse('audio/mp4; codecs="opus"') || mse('audio/webm; codecs="opus"'),
+      ac3: mse('audio/mp4; codecs="ac-3"'),
+      eac3: mse('audio/mp4; codecs="ec-3"'),
+    };
+  }
+  // Browsers often play MKV even though they say they can't (it is the same format as WebM). Outside the
+  // TV app, an MKV is tried as-is once; whether that worked is remembered for this device (learnMkv).
+  const learned = store.get('mkvDirect');
+  cached.mkv = cached.mkvNative || (learned ?? !window.LumenTV) === true;
   return cached;
 }
 
-export function deviceProfile(maxBitrate) {
+export function learnMkv(ok) {
+  if (cached?.mkvNative || store.get('mkvDirect') === ok) return;
+  store.set('mkvDirect', ok);
+}
+
+// convert: the profile for a real video conversion (capped bitrate, image subtitles burned in).
+// Otherwise the server is told the bitrate doesn't matter, so it never re-encodes just to save bandwidth.
+export function deviceProfile({ convert = false, maxBitrate } = {}) {
   const c = capabilities();
+  const bitrate = convert ? maxBitrate || CONVERT_BITRATE : DIRECT_BITRATE;
   const mp4Video = ['h264', c.hevc && 'hevc', c.av1 && 'av1', c.vp9 && 'vp9'].filter(Boolean).join(',');
   const audio = ['aac', 'mp3', c.opus && 'opus', c.flac && 'flac', c.ac3 && 'ac3', c.eac3 && 'eac3', 'vorbis']
     .filter(Boolean).join(',');
@@ -56,21 +76,26 @@ export function deviceProfile(maxBitrate) {
     });
   }
 
+  // Image subtitles can only be shown by burning them into the picture (a full conversion), so they
+  // are only offered that way when converting is allowed.
+  const imageSubs = convert ? ['pgssub', 'pgs', 'dvdsub', 'dvbsub'].map((Format) => ({ Format, Method: 'Encode' })) : [];
+
   return {
     Name: 'Lumen',
-    MaxStreamingBitrate: maxBitrate || 200_000_000,
-    MaxStaticBitrate: 200_000_000,
+    MaxStreamingBitrate: bitrate,
+    MaxStaticBitrate: DIRECT_BITRATE,
     MusicStreamingTranscodingBitrate: 384000,
     DirectPlayProfiles: directPlay,
     TranscodingProfiles: [
       {
-        // fMP4 lets the server copy HEVC/AV1 video untouched and only convert the audio.
+        // fMP4 lets the server copy HEVC/AV1 video untouched and only touch the audio when the app
+        // can't decode it (Dolby Digital is copied too where the browser plays it, e.g. Edge or Safari).
         Container: 'mp4',
         Type: 'Video',
         Protocol: 'hls',
         Context: 'Streaming',
         VideoCodec: ['h264', c.hevc && 'hevc', c.av1 && 'av1'].filter(Boolean).join(','),
-        AudioCodec: ['aac', c.flac && 'flac', 'mp3'].filter(Boolean).join(','),
+        AudioCodec: ['aac', c.eac3 && 'eac3', c.ac3 && 'ac3', c.flac && 'flac', 'mp3'].filter(Boolean).join(','),
         MaxAudioChannels: '6',
         MinSegments: 1,
         BreakOnNonKeyFrames: true,
@@ -83,10 +108,7 @@ export function deviceProfile(maxBitrate) {
       { Format: 'vtt', Method: 'External' },
       { Format: 'ass', Method: 'External' },
       { Format: 'ssa', Method: 'External' },
-      { Format: 'pgssub', Method: 'Encode' },
-      { Format: 'pgs', Method: 'Encode' },
-      { Format: 'dvdsub', Method: 'Encode' },
-      { Format: 'dvbsub', Method: 'Encode' },
+      ...imageSubs,
     ],
     ResponseProfiles: [],
   };

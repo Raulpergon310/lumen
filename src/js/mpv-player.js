@@ -44,7 +44,7 @@ export function probeInfo(item, { ahead = false } = {}) {
   if (hit && hit.api === api && Date.now() - hit.t < PROBE_MS && (hit.done || !hit.ahead || ahead)) return hit.p;
   const body = {
     UserId: api.userId,
-    DeviceProfile: deviceProfile(store.get('maxBitrate', 0) || undefined),
+    DeviceProfile: deviceProfile(),
     MaxStreamingBitrate: 200_000_000,
     EnableDirectPlay: true,
     EnableDirectStream: false,

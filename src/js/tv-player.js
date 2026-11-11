@@ -30,7 +30,7 @@ export async function startTvPlayback(item, opts) {
     const ms = probe?.MediaSources?.[0];
     const choice = chooseSubtitle(ms);
     if (ms && choice.index !== undefined) ms.DefaultSubtitleStreamIndex = choice.index;
-    plan = playbackPlan(ms);
+    plan = playbackPlan(ms, { external: store.get('player', 'auto') === 'auto' && hasVlc() });
     if (ctx.launch?.cancelled) return null; // Back was pressed while the server was answering
     if (ms && store.get('player', 'auto') === 'auto' && hasVlc() && needsVlc(ms, plan)) {
       return await openVlc(item, ms, opts);
