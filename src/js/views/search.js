@@ -15,7 +15,7 @@ export async function searchView() {
     const term = input.value.trim();
     lastTerm = term;
     const my = ++seq;
-    if (term.length < 2) { results.replaceChildren(); return; }
+    if (term.length < 2) { suggest(my); return; }
     results.replaceChildren(spinner());
     try {
       // Titles and people (actors, directors…) at the same time.
@@ -47,9 +47,24 @@ export async function searchView() {
     }
   }, 300);
 
+  // Nothing typed yet: a few things you haven't watched, instead of an empty page.
+  const suggest = async (my) => {
+    results.replaceChildren();
+    try {
+      const r = await ctx.api.items({ IncludeItemTypes: 'Movie,Series', Recursive: true, Filters: 'IsUnplayed', SortBy: 'Random', Limit: 24 });
+      const picks = (r.Items || []).filter((i) => !i.UserData?.Played).slice(0, 14);
+      if (my !== seq || !picks.length) return;
+      results.replaceChildren(h('section', { class: 'search-group' },
+        h('h2', null, 'Por si no sabes qué buscar'),
+        h('p', { class: 'muted search-hint' }, 'Al azar, entre lo que aún no has visto.'),
+        h('div', { class: 'grid' }, picks.map((i) => posterCard(i)))));
+    } catch {}
+  };
+
   input.addEventListener('input', run);
   requestAnimationFrame(() => input.focus());
   if (lastTerm) run();
+  else suggest(seq);
 
   return h('div', { class: 'page search' },
     h('div', { class: 'search-box' }, h('span', { html: icons.search }), input),

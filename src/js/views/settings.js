@@ -29,9 +29,9 @@ function select(key, fallback, label, options, hint) {
 
 // New seasons (seasons.js): what the last check found, and a button to check now.
 function seasonSetting() {
-  const status = h('span', { class: 'hint' }, 'Avisa cuando sale una temporada o un episodio nuevo de cualquier serie del NAS que aún no tienes descargado. Se comprueba cada 12 horas.');
+  const status = h('span', { class: 'hint' }, 'Las series con temporadas o episodios ya emitidos que aún no están en el servidor llevan un punto verde, y su ficha dice cuáles faltan. Se comprueba cada 12 horas.');
   const describe = (s, n) => (s
-    ? `Última comprobación: ${s.series} series, ${s.checked} encontradas en TVmaze. ${s.seasons ?? n} con temporada nueva y ${s.episodes ?? 0} con episodios nuevos${n !== s.found ? ` (${s.found - n} ocultas)` : ''}.`
+    ? `Última comprobación: ${s.series} series, ${s.checked} encontradas en TVmaze. ${s.seasons ?? n} con temporadas que faltan y ${s.episodes ?? 0} con episodios nuevos${n !== s.found ? ` (${s.found - n} ocultas)` : ''}.`
     : status.textContent);
   import('../seasons.js').then((m) => { const s = m.lastCheckSummary(); if (s) status.textContent = describe(s, s.found); });
   const btn = button('Comprobar ahora', {
@@ -42,7 +42,7 @@ function seasonSetting() {
         const m = await import('../seasons.js');
         const found = await m.newSeasons({ force: true });
         status.textContent = describe(m.lastCheckSummary(), found.length);
-        if (found.length) toast(`${found.length} serie${found.length > 1 ? 's' : ''} con novedades para descargar: mira la fila en Inicio`);
+        if (found.length) toast(`${found.length} serie${found.length > 1 ? 's' : ''} con algo por descargar: llevan un punto verde`);
       } catch (e) {
         status.textContent = `No se pudo comprobar: ${e.message}`;
       } finally {
@@ -50,7 +50,7 @@ function seasonSetting() {
       }
     },
   });
-  return h('div', { class: 'setting' }, h('span', { class: 'setting-text' }, h('span', null, 'Aviso de temporadas nuevas'), status), btn);
+  return h('div', { class: 'setting' }, h('span', { class: 'setting-text' }, h('span', null, 'Temporadas y episodios que faltan'), status), btn);
 }
 
 export function settingsView() {
@@ -107,6 +107,7 @@ export function settingsView() {
       window.lumenHost ? toggle('autoHdr', true, 'Activar el HDR de Windows con las películas HDR', 'Lo enciende al empezar una película o serie HDR y lo vuelve a apagar al terminar (solo si lo encendió Lumen). Así el escritorio se ve como siempre.') : null,
       window.LumenTV ? null : toggle('softAudio', true, 'Decodificar el audio Dolby en la app', 'Con Dolby Digital (AC3 / E-AC3) se reproduce el archivo original y Lumen decodifica el sonido, sin que el servidor convierta nada: arranca y salta mucho más rápido. Apágalo si notas el sonido desincronizado.'),
       window.LumenTV ? null : select('audioMix', 'dialog', 'Sonido 5.1 en altavoces o auriculares', [['dialog', 'Voces claras (recomendado)'], ['night', 'Voces claras + modo noche'], ['standard', 'Mezcla estándar']], 'Cómo se reparte el 5.1 en dos altavoces. Voces claras sube los diálogos frente a la música y los efectos; el modo noche además acerca lo fuerte y lo flojo, para no andar subiendo y bajando el volumen.'),
+      window.LumenTV ? null : select('sharpen', 0, 'Nitidez extra de la imagen', [[0, 'Normal (fiel al original)'], [0.25, 'Un poco más nítida'], [0.5, 'Más nítida']], 'Realza los bordes en el reproductor de la app. Puede hacer más visible el grano o los defectos de compresión.'),
       toggle('allowTranscode', false, 'Convertir en el servidor sin preguntar', 'Lumen siempre intenta primero el archivo original y luego la imagen original reempaquetada. Convertir la imagen es el último recurso: si está apagado, la app pregunta antes.'),
       select('maxBitrate', 0, 'Calidad al convertir', QUALITIES, 'Solo se usa cuando el servidor tiene que convertir la imagen. Más calidad = más carga para el NAS.'),
       toggle('autoplayNext', true, 'Reproducir el siguiente episodio automáticamente'),

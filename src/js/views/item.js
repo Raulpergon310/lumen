@@ -6,6 +6,7 @@ import { backdropSrc, logoSrc, thumbSrc, progressOf, techBadges } from '../media
 import { openImagePicker } from '../images.js';
 import { attachCardActions } from '../cardmenu.js';
 import { personCard } from './person.js';
+import { newFor, missingFor, describeNew, hideNewSeason, fmtDate } from '../seasons.js';
 
 export async function itemView({ params: [id], query, isStale }) {
   const api = ctx.api;
@@ -30,7 +31,7 @@ export async function itemView({ params: [id], query, isStale }) {
   const header = h('section', { class: 'detail-head' });
   page.append(header);
   renderHeader(header, item);
-  if (item.Type === 'Series') import('../seasons.js').then((m) => m.seriesNote(item, header)).catch(() => {});
+  if (item.Type === 'Series') missingNote(item, header);
 
   if (item.Type === 'Series') {
     page.append(await seriesSection(item, query.season));
@@ -211,8 +212,27 @@ async function seriesSection(series, wantedSeason) {
     }
   };
 
+  const news = missingFor(series.Id);
+  const isNew = (m) => m.n > news.have;
+
+  // A season that has aired but isn't on the server: its pill says so instead of listing episodes.
+  const showMissing = (m, pill) => {
+    current = m;
+    seasonBtn.hidden = true;
+    for (const p of pills.children) p.classList.toggle('active', p === pill);
+    list.replaceChildren(h('div', { class: 'missing-season' },
+      h('div', { class: 'missing-title' }, isNew(m) ? h('span', { class: 'dot-new inline' }) : null, `Temporada ${m.n}`),
+      h('p', null, isNew(m) ? 'Ya se ha emitido, pero aún no está en el servidor.' : 'No está en el servidor.'),
+      h('p', { class: 'muted' }, [
+        `Se estrenó el ${fmtDate(m.premiere)}`,
+        m.episodes ? `${m.episodes} episodio${m.episodes > 1 ? 's' : ''} emitido${m.episodes > 1 ? 's' : ''}` : '',
+        m.airing ? 'sigue en emisión' : '',
+      ].filter(Boolean).join(' · '))));
+  };
+
   const load = async (season) => {
     current = season;
+    seasonBtn.hidden = false;
     paintSeasonBtn();
     for (const p of pills.children) p.classList.toggle('active', p.dataset.id === season.Id);
     list.replaceChildren(spinner());
@@ -220,6 +240,15 @@ async function seriesSection(series, wantedSeason) {
       const eps = await api.episodes(series.Id, season.Id);
       if (current !== season) return;
       list.replaceChildren(...eps.map(episodeCard));
+      // Episodes of this season that have aired and aren't on the server yet.
+      if (news?.eps && season.IndexNumber === news.eps.season) {
+        const e = news.eps;
+        list.append(h('div', { class: 'episode episode-missing' },
+          h('div', { class: 'card-art' }, h('span', { class: 'dot-new' }), h('span', { class: 'missing-count' }, e.toEp > e.fromEp ? `E${e.fromEp}–${e.toEp}` : `E${e.fromEp}`)),
+          h('div', { class: 'episode-num' }, e.toEp > e.fromEp ? `Episodios ${e.fromEp} a ${e.toEp}` : `Episodio ${e.fromEp}`),
+          h('div', { class: 'episode-title' }, 'Aún no están en el servidor'),
+          h('div', { class: 'muted small' }, `Emitidos desde el ${fmtDate(e.premiere)}`)));
+      }
       const target = eps.find((e) => progressOf(e) > 0) || eps.find((e) => !e.UserData?.Played);
       const idx = target ? eps.indexOf(target) : 0;
       if (idx > 0) requestAnimationFrame(() => list.children[idx]?.scrollIntoView({ inline: 'start', block: 'nearest' }));
@@ -228,9 +257,18 @@ async function seriesSection(series, wantedSeason) {
     }
   };
 
+  // Seasons in order, with the missing ones in their place.
+  const pending = [...(news?.missing || [])];
+  const missingPill = (m) => {
+    const pill = h('button', { class: 'pill missing', title: 'Aún no está en el servidor', onclick: () => showMissing(m, pill) }, isNew(m) ? h('span', { class: 'dot-new inline' }) : null, `Temporada ${m.n}`);
+    return pill;
+  };
   for (const s of seasons) {
-    pills.append(h('button', { class: 'pill', dataset: { id: s.Id }, onclick: () => load(s) }, s.Name));
+    while (pending.length && s.IndexNumber > pending[0].n) pills.append(missingPill(pending.shift()));
+    const hasNewEps = news?.eps && s.IndexNumber === news.eps.season;
+    pills.append(h('button', { class: 'pill', dataset: { id: s.Id }, onclick: () => load(s) }, s.Name, hasNewEps ? h('span', { class: 'dot-new inline after' }) : null));
   }
+  for (const m of pending) pills.append(missingPill(m));
   load(current);
   wrap.append(h('div', { class: 'season-bar' }, pills, seasonBtn), list);
   return wrap;
@@ -265,4 +303,15 @@ async function folderView(item, isStale) {
   return h('div', { class: 'page library' },
     h('div', { class: 'lib-head' }, h('h1', null, item.Name)),
     h('div', { class: 'grid' }, (r.Items || []).map(posterCard)));
+}
+
+// Series page: one line under the title saying what has aired and isn't on the server.
+function missingNote(series, header) {
+  const f = newFor(series.Id);
+  if (!f) return;
+  const note = h('div', { class: 'new-season-note' },
+    h('span', { class: 'dot-new inline' }),
+    h('span', null, `${describeNew(f)} en el servidor.`),
+    button('No avisar', { onclick: () => { hideNewSeason(f); note.remove(); } }));
+  header.querySelector('.detail-info')?.append(note);
 }

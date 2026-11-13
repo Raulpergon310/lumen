@@ -26,18 +26,16 @@ export async function homeView({ isStale }) {
   // Recommendations load after the page is on screen, so they never slow down opening the app.
   const forYou = h('div', { class: 'rec-slot' });
   const discover = h('div', { class: 'rec-slot' });
-  // Lo de siempre arriba (seguir viendo, temporadas y episodios nuevos, lo recién añadido); las recomendaciones
-  // y los «Porque viste…» al final.
-  const newSeasons = h('div', { class: 'rec-slot' });
+  // Lo de siempre arriba (seguir viendo, lo recién añadido); las recomendaciones y los «Porque viste…» al final.
   const rows = [
     row('Seguir viendo', resumeItems, { kind: 'thumb' }),
     row('A continuación', nextUpItems, { kind: 'thumb' }),
-    newSeasons,
     ...libs.map((v, i) => row(`Novedades en ${v.Name}`, val(latest[i]), { href: `#/library/${v.Id}` })),
     discover,
     forYou,
   ].filter(Boolean);
-  import('../seasons.js').then((m) => m.newSeasonsRow(newSeasons)).catch(() => newSeasons.remove());
+  // Temporadas y episodios que faltan: se comprueba en segundo plano y las series afectadas llevan un punto verde.
+  import('../seasons.js').then((m) => m.newSeasons()).catch(() => {});
   loadRecommendations(libs, forYou, discover);
 
   // Carousel: a couple of new arrivals plus unwatched titles at random from the whole library.

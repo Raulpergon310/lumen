@@ -63,6 +63,7 @@ class Player {
     const v = (this.video = h('video', { class: 'p-video', preload: 'auto' }));
     v.volume = store.get('volume', 1);
     v.muted = store.get('muted', false);
+    applySharpen(v);
 
     this.subLayer = h('div', { class: 'p-subs' });
     this.spinnerEl = h('div', { class: 'p-spinner' }, h('div', { class: 'spinner' }));
@@ -1112,6 +1113,25 @@ function languageName(code) {
 }
 
 class NeedsTranscodeError extends Error {}
+
+// Optional extra sharpness (Ajustes): a light unsharp pass over the scaled picture. Off by default —
+// measured on a 2880x1620 panel, the plain scaling is already as crisp as mpv's — and free of
+// dropped frames when on. Not on the TV (slow GPU).
+function applySharpen(video) {
+  const a = IS_TV ? 0 : Number(store.get('sharpen', 0)) || 0;
+  if (!a) return;
+  let svg = document.getElementById('lumen-sharp-svg');
+  if (!svg) {
+    svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.id = 'lumen-sharp-svg';
+    svg.setAttribute('width', '0');
+    svg.setAttribute('height', '0');
+    svg.style.position = 'absolute';
+    document.body.append(svg);
+  }
+  svg.innerHTML = `<filter id="lumen-sharp" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feConvolveMatrix order="3" preserveAlpha="true" kernelMatrix="0 ${-a} 0 ${-a} ${1 + 4 * a} ${-a} 0 ${-a} 0"/></filter>`;
+  video.style.filter = 'url(#lumen-sharp)';
+}
 
 // A text subtitle to use instead of an image one (same language, same forced-ness if possible), or -1.
 function textSubtitleFor(ms, index, quiet = false) {

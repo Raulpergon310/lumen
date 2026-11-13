@@ -3,17 +3,17 @@
 // no key; found through the TVDB/IMDb ids Jellyfin keeps, or by name and year). It reports
 //  - seasons that have aired and aren't on the NAS, and
 //  - for a season still airing (or just finished), aired episodes that aren't on the NAS yet.
-// They show in a home row and on the series page. Checked at most every 12 hours, in the background.
-import { h, button, toast } from './ui.js';
+// A series with something new gets a green dot on its card, and its page says exactly which seasons
+// and episodes are missing (this file only finds it out; cards.js and views/item.js draw it).
+// Checked at most every 12 hours, in the background.
 import { ctx } from './context.js';
 import { store, log } from './store.js';
-import { row } from './cards.js';
 
 const TVMAZE = 'https://api.tvmaze.com';
 const CHECK_MS = 12 * 3600 * 1000;
 const MAX_SERIES = 500;
 const RECENT_DAYS = 120; // episodes are compared only for seasons with an episode aired this recently
-const STORE_KEY = 'seasonCheck3';
+const STORE_KEY = 'seasonCheck4';
 
 let running = null;
 let lastSummary = null;
@@ -32,7 +32,7 @@ function daysAgo(n) {
   return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
 }
 
-function fmtDate(d) {
+export function fmtDate(d) {
   try { return new Date(d + 'T12:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return d; }
 }
 
@@ -112,42 +112,49 @@ async function runCheck() {
   for (const s of series) {
     try {
       // Seasons really on the NAS ("missing" seasons Jellyfin may list don't count).
-      const have = Math.max(0, ...((await local(`/Shows/${s.Id}/Seasons`, {}))?.Items || []).filter((x) => x.IndexNumber > 0).map((x) => x.IndexNumber));
+      const mineSeasons = new Set(((await local(`/Shows/${s.Id}/Seasons`, {}))?.Items || []).filter((x) => x.IndexNumber > 0).map((x) => x.IndexNumber));
+      const have = Math.max(0, ...mineSeasons);
       if (!have) continue;
       const id = await tvmazeId(s);
       if (!id) { log(`novedades ${s.Name}: no está en TVmaze`); continue; }
       checked++;
       const show = await tvmaze(`/shows/${id}?embed[]=seasons&embed[]=episodes`);
-      const seasons = (show?._embedded?.seasons || []).filter((x) => x.number > 0 && x.premiereDate && x.premiereDate <= now);
-      const newest = seasons.reduce((m, x) => (x.number > m.number ? x : m), { number: 0 });
+      // (Shows TVmaze numbers by year — 2019, 2020… — can't be matched with the NAS's 1, 2, 3.)
+      const seasons = (show?._embedded?.seasons || []).filter((x) => x.number > 0 && x.number < 100 && x.premiereDate && x.premiereDate <= now);
+      const airedEps = (show?._embedded?.episodes || []).filter((e) => e.number > 0 && e.airdate && e.airdate <= now);
 
-      if (newest.number > have) {
-        const first = seasons.find((x) => x.number === have + 1) || newest;
-        const f = { kind: 'season', id: s.Id, name: s.Name, from: have + 1, to: newest.number, premiere: first.premiereDate, airing: !newest.endDate || newest.endDate > now };
-        found.push(f);
-        log(`novedades ${s.Name}: en el NAS ${have} temporadas, emitidas ${newest.number}`);
-        continue;
-      }
+      // Every aired season that isn't on the NAS: newer ones, and gaps in between.
+      const missing = seasons.filter((x) => !mineSeasons.has(x.number)).sort((a, b) => a.number - b.number).map((x) => ({
+        n: x.number,
+        premiere: x.premiereDate,
+        episodes: airedEps.filter((e) => e.season === x.number).length || x.episodeOrder || 0,
+        airing: !x.endDate || x.endDate > now,
+      }));
 
-      // Same season as the NAS: is it still airing, with episodes you don't have yet?
-      const aired = (show?._embedded?.episodes || []).filter((e) => e.season === have && e.number > 0 && e.airdate && e.airdate <= now);
+      // The newest season on the NAS: is it still airing (or just over), with episodes you don't have yet?
+      let eps = null;
+      const aired = airedEps.filter((e) => e.season === have);
       const lastAired = aired.reduce((m, e) => (e.number > m.number ? e : m), { number: 0 });
-      if (!lastAired.number || lastAired.airdate < recent) continue;
-      const mine = (await local(`/Shows/${s.Id}/Episodes`, { season: have }))?.Items || [];
-      const haveEp = Math.max(0, ...mine.filter((e) => (e.ParentIndexNumber ?? have) === have).map((e) => e.IndexNumberEnd || e.IndexNumber || 0));
-      if (lastAired.number > haveEp) {
-        const firstMissing = aired.filter((e) => e.number > haveEp).sort((a, b) => a.number - b.number)[0] || lastAired;
-        found.push({ kind: 'episodes', id: s.Id, name: s.Name, season: have, fromEp: haveEp + 1, toEp: lastAired.number, premiere: firstMissing.airdate });
-        log(`novedades ${s.Name}: T${have} en el NAS hasta E${haveEp}, emitidos hasta E${lastAired.number}`);
+      if (lastAired.number && lastAired.airdate >= recent) {
+        const mine = (await local(`/Shows/${s.Id}/Episodes`, { season: have }))?.Items || [];
+        const haveEp = Math.max(0, ...mine.filter((e) => (e.ParentIndexNumber ?? have) === have).map((e) => e.IndexNumberEnd || e.IndexNumber || 0));
+        if (lastAired.number > haveEp) {
+          const firstMissing = aired.filter((e) => e.number > haveEp).sort((a, b) => a.number - b.number)[0] || lastAired;
+          eps = { season: have, fromEp: haveEp + 1, toEp: lastAired.number, premiere: firstMissing.airdate };
+        }
       }
+      if (!missing.length && !eps) continue;
+      found.push({ id: s.Id, name: s.Name, have, missing, eps });
+      log(`novedades ${s.Name}: faltan ${missing.length ? 'T' + missing.map((m) => m.n).join(',T') : ''}${eps ? ` T${eps.season} E${eps.fromEp}-${eps.toEp}` : ''}`);
     } catch (e) {
       log(`novedades ${s.Name}: ${e.message}`);
     }
   }
   saveIds(true);
-  const seasonsFound = found.filter((f) => f.kind === 'season').length;
-  log(`novedades: ${series.length} series, ${checked} en TVmaze, ${seasonsFound} con temporada nueva, ${found.length - seasonsFound} con episodios nuevos`);
-  lastSummary = { series: series.length, checked, found: found.length, seasons: seasonsFound, episodes: found.length - seasonsFound };
+  const seasonsFound = found.filter((f) => newer(f).length).length;
+  const epsFound = found.filter((f) => f.eps).length;
+  log(`novedades: ${series.length} series, ${checked} en TVmaze, ${seasonsFound} con temporadas que faltan, ${epsFound} con episodios nuevos`);
+  lastSummary = { series: series.length, checked, found: found.length, seasons: seasonsFound, episodes: epsFound };
   return found;
 }
 
@@ -161,6 +168,7 @@ export function newSeasons({ force = false } = {}) {
     running = runCheck()
       .then((found) => {
         store.set(STORE_KEY, { at: Date.now(), serverId, found, summary: lastSummary });
+        markCards();
         return found;
       })
       .catch((e) => {
@@ -174,70 +182,65 @@ export function newSeasons({ force = false } = {}) {
   return running.then(visible);
 }
 
+// Seasons after the newest one on the NAS: those are news. Older gaps (seasons you never kept) are only
+// listed on the series page, without a dot.
+function newer(f) {
+  return f.missing.filter((m) => m.n > f.have);
+}
+
 function key(f) {
-  return f.kind === 'episodes' ? `${f.id}:s${f.season}e${f.toEp}` : `${f.id}:${f.to}`;
+  return `${f.id}:${newer(f).map((m) => m.n).join(',')}:${f.eps ? `s${f.eps.season}e${f.eps.toEp}` : ''}`;
 }
 
 function visible(found) {
   const hidden = store.get('seasonHidden', {});
-  return (found || []).filter((f) => !hidden[key(f)]);
+  return (found || []).filter((f) => f.missing && !hidden[key(f)]);
 }
 
+// "No avisar": until something else comes out for that series.
 export function hideNewSeason(f) {
   store.set('seasonHidden', { ...store.get('seasonHidden', {}), [key(f)]: Date.now() });
+  markCards();
 }
 
-function label(f) {
-  if (f.kind === 'episodes') {
-    const eps = f.toEp > f.fromEp ? `episodios ${f.fromEp}–${f.toEp}` : `episodio ${f.fromEp}`;
-    return `Temporada ${f.season}: ${eps} · desde el ${fmtDate(f.premiere)}`;
-  }
-  const which = f.to > f.from ? `Temporadas ${f.from}–${f.to}` : `Temporada ${f.from}`;
-  return `${which} · ${f.airing && f.to === f.from ? 'en emisión desde' : 'salió el'} ${fmtDate(f.premiere)}`;
+// Everything known right now about a series (no waiting): { have, missing: [{ n, premiere, episodes,
+// airing }], eps: { season, fromEp, toEp, premiere } | null }, or null when nothing is missing.
+export function missingFor(seriesId) {
+  const cached = store.get(STORE_KEY);
+  if (!cached || cached.serverId !== store.get('activeServer')) return null;
+  return (cached.found || []).find((f) => f.missing && f.id === seriesId) || null;
 }
 
-function badge(f) {
-  if (f.kind === 'episodes') return `T${f.season} E${f.fromEp}${f.toEp > f.fromEp ? `–${f.toEp}` : ''}`;
-  return f.to > f.from ? `T${f.from}–T${f.to}` : `T${f.from}`;
+// The same, only when there is something NEW (a later season, or new episodes) the user hasn't hidden:
+// this is what earns the green dot.
+export function newFor(seriesId) {
+  const f = missingFor(seriesId);
+  return f && (newer(f).length || f.eps) && visible([f]).length ? f : null;
 }
 
-// Home: row "Nuevo para descargar", in place of `slot`.
-export async function newSeasonsRow(slot) {
-  const api = ctx.api;
-  const found = await newSeasons();
-  if (!found.length || !slot.isConnected || ctx.api !== api) { slot.remove(); return; }
-  const items = (await api.items({ Ids: found.map((f) => f.id).join(','), Fields: 'PrimaryImageAspectRatio' }).catch(() => null))?.Items || [];
-  const byId = new Map(items.map((i) => [i.Id, i]));
-  const ordered = found.filter((f) => byId.has(f.id));
-  const section = row('Nuevo para descargar', ordered.map((f) => byId.get(f.id)));
-  if (!section) { slot.remove(); return; }
-  section.querySelectorAll('.row-track > .card').forEach((card, i) => {
-    const f = ordered[i];
-    card.querySelector('.card-art')?.append(h('span', { class: 'badge-new' }, badge(f)));
-    const sub = card.querySelector('.card-sub') || card.appendChild(h('div', { class: 'card-sub' }));
-    sub.textContent = label(f);
-    card.title = `${f.name}: ${label(f)}`;
-  });
-  slot.replaceWith(section);
+// "Faltan las temporadas 3 y 4 · episodios 8–10 de la temporada 2"
+export function describeNew(f) {
+  const parts = [];
+  const ns = newer(f).map((m) => m.n);
+  if (ns.length === 1) parts.push(`la temporada ${ns[0]}`);
+  else if (ns.length > 1) parts.push(`las temporadas ${ns.slice(0, -1).join(', ')} y ${ns[ns.length - 1]}`);
+  if (f.eps) parts.push(`${f.eps.toEp > f.eps.fromEp ? `los episodios ${f.eps.fromEp}–${f.eps.toEp}` : `el episodio ${f.eps.fromEp}`} de la temporada ${f.eps.season}`);
+  return `${ns.length > 1 || (f.eps && (ns.length || f.eps.toEp > f.eps.fromEp)) ? 'Faltan' : 'Falta'} ${parts.join(' y ')}`;
+}
 
-  // A heads-up once per novelty.
-  const told = store.get('seasonTold', {});
-  const fresh = ordered.filter((f) => !told[key(f)]);
-  if (fresh.length) {
-    toast(fresh.length === 1
-      ? `${fresh[0].kind === 'episodes' ? 'Episodios nuevos' : 'Nueva temporada'} de ${fresh[0].name}: ${label(fresh[0])}`
-      : `Hay ${fresh.length} series con temporadas o episodios nuevos para descargar`);
-    store.set('seasonTold', { ...told, ...Object.fromEntries(fresh.map((f) => [key(f), Date.now()])) });
+// The green dot on series cards already on screen (cards drawn later get theirs in cards.js).
+export function markCards(root = document) {
+  for (const card of root.querySelectorAll('.card[data-series]')) {
+    const f = newFor(card.dataset.series);
+    const dot = card.querySelector('.dot-new');
+    if (f && !dot) card.querySelector('.card-art')?.append(newDot(f));
+    else if (!f && dot) dot.remove();
   }
 }
 
-// Series page: a note under the title when something newer is out.
-export async function seriesNote(series, container) {
-  const found = await newSeasons();
-  const f = found.find((x) => x.id === series.Id);
-  if (!f || !container.isConnected) return;
-  const note = h('div', { class: 'new-season-note' },
-    h('span', null, `Nuevo: ${label(f)}. Aún no está en el servidor.`),
-    button('Ocultar aviso', { onclick: () => { hideNewSeason(f); note.remove(); } }));
-  container.querySelector('.detail-info')?.append(note);
+export function newDot(f) {
+  const dot = document.createElement('span');
+  dot.className = 'dot-new';
+  dot.title = `${describeNew(f)} en el servidor`;
+  return dot;
 }

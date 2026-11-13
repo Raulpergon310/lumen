@@ -3,6 +3,17 @@ import { icons } from './icons.js';
 import { ctx } from './context.js';
 import { posterSrc, thumbSrc, progressOf } from './media.js';
 import { attachCardActions } from './cardmenu.js';
+import { newFor, newDot } from './seasons.js';
+
+// Series with seasons or episodes out that aren't on the server yet get a green dot.
+function seriesDot(item) {
+  const f = item.Type === 'Series' ? newFor(item.Id) : null;
+  return f ? newDot(f) : null;
+}
+
+function seriesData(item) {
+  return item.Type === 'Series' ? { series: item.Id } : {};
+}
 
 function progressBar(pct) {
   return h('div', { class: 'progress' }, h('div', { style: { width: `${Math.min(100, Math.max(2, pct))}%` } }));
@@ -26,10 +37,11 @@ export function posterCard(item) {
   const sub = item.Type === 'Episode'
     ? episodeLabel(item)
     : item.ProductionYear || (item.Type === 'Season' ? item.SeriesName : '');
-  const card = h('a', { class: 'card card-poster', href: itemHref(item), title: item.Name },
+  const card = h('a', { class: 'card card-poster', href: itemHref(item), title: item.Name, dataset: seriesData(item) },
     h('div', { class: 'card-art' },
       image(posterSrc(ctx.api, item, 360), { placeholder: item.Name }),
       playedBadge(item),
+      seriesDot(item),
       pct ? progressBar(pct) : null),
     h('div', { class: 'card-title' }, item.Type === 'Episode' ? item.SeriesName : item.Name),
     sub ? h('div', { class: 'card-sub' }, sub) : null);
@@ -54,10 +66,11 @@ export function thumbCard(item, { showPlay = true } = {}) {
     })
     : null;
 
-  const card = h('a', { class: 'card card-thumb', href: itemHref(item), title: item.Name },
+  const card = h('a', { class: 'card card-thumb', href: itemHref(item), title: item.Name, dataset: seriesData(item) },
     h('div', { class: 'card-art' },
       image(thumbSrc(ctx.api, item, 640), { placeholder: isEp ? item.SeriesName : item.Name }),
       playedBadge(item),
+      seriesDot(item),
       play,
       pct ? progressBar(pct) : null),
     h('div', { class: 'card-title' }, isEp ? item.SeriesName : item.Name),
