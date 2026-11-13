@@ -43,7 +43,13 @@ export class SoftAudio {
     const mb = await loadLibs();
     if (this.closed) return;
     this.input = new mb.Input({
-      source: new mb.UrlSource(this.url, { maxCacheSize: 48 * 1024 * 1024 }),
+      // Kept out of the browser's cache: while the <video> is loading the same file, a second reader
+      // going through the cache is refused ("Failed to fetch"). A hiccup is retried a few times.
+      source: new mb.UrlSource(this.url, {
+        maxCacheSize: 48 * 1024 * 1024,
+        requestInit: { cache: 'no-store' },
+        getRetryDelay: (attempts) => (attempts < 4 ? 250 * (attempts + 1) : null),
+      }),
       formats: mb.ALL_FORMATS,
     });
     const tracks = await this.input.getAudioTracks();

@@ -359,11 +359,12 @@ class Player {
       });
       const triesMkv = /mkv|matroska/i.test(ms.Container || '') && !capabilities().mkvNative;
       v.addEventListener('loadedmetadata', () => {
-        if (startSec > 0) v.currentTime = startSec;
+        if (startSec > 0 && Math.abs(v.currentTime - startSec) > 1) v.currentTime = startSec;
         if (triesMkv && v.videoWidth > 0) learnMkv(true);
       }, { once: true });
       this.triesMkv = triesMkv;
-      v.src = url;
+      // "#t=": the file is opened straight at the resume point instead of at 0 and then moved.
+      v.src = startSec > 0 ? `${url}#t=${startSec.toFixed(2)}` : url;
       this.armDirectPlayWatchdog();
       if (plan.softAudio) this.startSoftAudio(url, ms, wantedAudio);
     } else {
@@ -456,7 +457,10 @@ class Player {
       log(`soft audio falló: ${e?.message || e}`);
       this.fallbackToTranscode({ keepMkv: true });
     };
-    const soft = (this.soft = new SoftAudio(this.video, { url, ordinal, log, onError: failed }));
+    // Its own address (the server ignores the extra word): with the very same one as the <video>,
+    // Chromium refuses the second reader while the first is still loading.
+    const audioUrl = `${url}${url.includes('?') ? '&' : '?'}lumenAudio=1`;
+    const soft = (this.soft = new SoftAudio(this.video, { url: audioUrl, ordinal, log, onError: failed }));
     soft.start().catch(failed);
   }
 
