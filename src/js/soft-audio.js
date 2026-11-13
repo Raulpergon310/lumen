@@ -19,6 +19,61 @@ function loadLibs() {
   return libs;
 }
 
+// How 5.1 is folded into two speakers. The browser's own fold-down ('standard') leaves voices low
+// next to music and effects, which is what small laptop speakers suffer most from.
+//  - 'dialog': voices (centre) about 6 dB up relative to the rest, surround lower; a limiter catches peaks.
+//  - 'night':  the same, plus loud and quiet parts brought closer together.
+// Gains per channel: [front, centre, surround]; the subwoofer channel is dropped (as the standard does).
+export const MIXES = {
+  standard: null,
+  dialog: { gains: [0.6, 0.85, 0.4] },
+  night: { gains: [0.6, 0.85, 0.4], compress: true },
+};
+
+// Builds the chain for a mix between `input` (connect sources here) and `output`. Works on any
+// BaseAudioContext, so it can be measured offline. channels: of the track being played.
+export function buildMix(ctx, mixName, channels, output) {
+  const mix = MIXES[mixName] || null;
+  const stereoOut = ctx.destination.channelCount <= 2;
+  if (!mix || !stereoOut) return output;
+  let tail = output;
+  const chain = (node) => { node.connect(tail); tail = node; };
+
+  const limiter = ctx.createDynamicsCompressor();
+  Object.entries({ threshold: -4, knee: 0, ratio: 20, attack: 0.003, release: 0.1 }).forEach(([k, v]) => { limiter[k].value = v; });
+  chain(limiter);
+  if (mix.compress) {
+    // (The compressor node raises its own output to make up for what it takes off the peaks.)
+    const comp = ctx.createDynamicsCompressor();
+    Object.entries({ threshold: -32, knee: 12, ratio: 5, attack: 0.01, release: 0.3 }).forEach(([k, v]) => { comp[k].value = v; });
+    chain(comp);
+  }
+  if (channels < 6) return mix.compress ? tail : output; // stereo/mono: nothing to fold, only the night mode applies
+
+  // Channel order of the decoded sound: L R C LFE Ls Rs (then the rear pair on 7.1).
+  const [front, centre, surround] = mix.gains;
+  const merger = ctx.createChannelMerger(2);
+  merger.connect(tail);
+  const splitter = ctx.createChannelSplitter(Math.max(6, channels));
+  splitter.channelCountMode = 'explicit';
+  splitter.channelCount = Math.max(6, channels);
+  splitter.channelInterpretation = 'discrete';
+  const route = (from, to, gain) => {
+    const g = ctx.createGain();
+    g.gain.value = gain;
+    splitter.connect(g, from);
+    g.connect(merger, 0, to);
+  };
+  route(0, 0, front);
+  route(1, 1, front);
+  route(2, 0, centre);
+  route(2, 1, centre);
+  route(4, 0, surround);
+  route(5, 1, surround);
+  if (channels >= 8) { route(6, 0, surround); route(7, 1, surround); }
+  return splitter;
+}
+
 export function softAudioSupported() {
   return typeof WebAssembly === 'object' && !!(window.AudioContext || window.webkitAudioContext)
     && typeof HTMLScriptElement.supports === 'function' && HTMLScriptElement.supports('importmap');
@@ -26,7 +81,8 @@ export function softAudioSupported() {
 
 export class SoftAudio {
   // ordinal: position of the wanted track among the file's audio tracks (0 = first).
-  constructor(video, { url, ordinal = 0, onError, log = () => {} }) {
+  constructor(video, { url, ordinal = 0, mix = 'standard', onError, log = () => {} }) {
+    this.mix = mix;
     this.video = video;
     this.url = url;
     this.ordinal = ordinal;
@@ -68,6 +124,7 @@ export class SoftAudio {
     } catch {}
     this.gain = this.ctx.createGain();
     this.gain.connect(this.ctx.destination);
+    this.entry = buildMix(this.ctx, this.mix, track.numberOfChannels, this.gain);
 
     const v = this.video;
     const on = (ev, fn) => {
@@ -138,7 +195,7 @@ export class SoftAudio {
         if (when + duration > now) {
           const node = this.ctx.createBufferSource();
           node.buffer = buffer;
-          node.connect(this.gain);
+          node.connect(this.entry);
           node.onended = () => this.nodes.delete(node);
           if (when >= now) node.start(when);
           else node.start(now, now - when);

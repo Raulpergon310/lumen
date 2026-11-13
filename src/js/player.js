@@ -460,7 +460,8 @@ class Player {
     // Its own address (the server ignores the extra word): with the very same one as the <video>,
     // Chromium refuses the second reader while the first is still loading.
     const audioUrl = `${url}${url.includes('?') ? '&' : '?'}lumenAudio=1`;
-    const soft = (this.soft = new SoftAudio(this.video, { url: audioUrl, ordinal, log, onError: failed }));
+    const mix = store.get('audioMix', 'dialog');
+    const soft = (this.soft = new SoftAudio(this.video, { url: audioUrl, ordinal, mix, log, onError: failed }));
     soft.start().catch(failed);
   }
 

@@ -186,6 +186,7 @@ class MpvSession {
       alang: langPref(ctx.user?.Configuration?.AudioLanguagePreference, 'spa,es,jpn,ja,eng,en'),
       slang: langPref(ctx.user?.Configuration?.SubtitleLanguagePreference, 'spa,es,eng,en'),
       'sub-files': externalSubs.map((s) => s.url).join(';') || undefined,
+      af: mixFilter(ms, this.audioIndex),
     };
 
     this.ui({
@@ -473,6 +474,23 @@ class MpvSession {
     host.hdr?.restore().catch(() => {});
     if (session === this) session = null;
   }
+}
+
+// The same fold-down of 5.1/7.1 into two speakers as the built-in player (soft-audio.js, MIXES): voices
+// up, surround down, a limiter for the peaks; "night" also brings loud and quiet closer together.
+// Always a string ('' = none), so a file without it clears the previous file's filter.
+function mixFilter(ms, audioIndex) {
+  const mix = store.get('audioMix', 'dialog');
+  if (mix !== 'dialog' && mix !== 'night') return '';
+  const streams = ms.MediaStreams || [];
+  const a = streams.find((s) => s.Type === 'Audio' && s.Index === audioIndex) || streams.find((s) => s.Type === 'Audio');
+  const surround = (a?.Channels || 2) >= 6;
+  const chain = [];
+  if (surround) chain.push('pan=stereo|FL=0.6*FL+0.85*FC+0.4*SL+0.4*BL|FR=0.6*FR+0.85*FC+0.4*SR+0.4*BR');
+  if (mix === 'night') chain.push('acompressor=threshold=-32dB:ratio=5:attack=10:release=300:makeup=6');
+  if (!chain.length) return '';
+  chain.push('alimiter=limit=0.63:level=false');
+  return `lavfi=[${chain.join(',')}]`;
 }
 
 function isHdr(ms) {
