@@ -29,7 +29,7 @@ function select(key, fallback, label, options, hint) {
 
 // New seasons (seasons.js): what the last check found, and a button to check now.
 function seasonSetting() {
-  const status = h('span', { class: 'hint' }, 'Las series con temporadas o episodios ya emitidos que aún no están en el servidor llevan un punto verde, y su ficha dice cuáles faltan. Se comprueba cada 12 horas.');
+  const status = h('span', { class: 'hint' }, 'Las series con temporadas o episodios ya emitidos que aún no están en el servidor llevan un borde morado, y su ficha dice cuáles faltan. Se comprueba cada 12 horas.');
   const describe = (s, n) => (s
     ? `Última comprobación: ${s.series} series, ${s.checked} encontradas en TVmaze. ${s.seasons ?? n} con temporadas que faltan y ${s.episodes ?? 0} con episodios nuevos${n !== s.found ? ` (${s.found - n} ocultas)` : ''}.`
     : status.textContent);
@@ -42,7 +42,7 @@ function seasonSetting() {
         const m = await import('../seasons.js');
         const found = await m.newSeasons({ force: true });
         status.textContent = describe(m.lastCheckSummary(), found.length);
-        if (found.length) toast(`${found.length} serie${found.length > 1 ? 's' : ''} con algo por descargar: llevan un punto verde`);
+        if (found.length) toast(`${found.length} serie${found.length > 1 ? 's' : ''} con algo por descargar: llevan un borde morado`);
       } catch (e) {
         status.textContent = `No se pudo comprobar: ${e.message}`;
       } finally {

@@ -220,8 +220,8 @@ async function seriesSection(series, wantedSeason) {
     current = m;
     seasonBtn.hidden = true;
     for (const p of pills.children) p.classList.toggle('active', p === pill);
-    list.replaceChildren(h('div', { class: 'missing-season' },
-      h('div', { class: 'missing-title' }, isNew(m) ? h('span', { class: 'dot-new inline' }) : null, `Temporada ${m.n}`),
+    list.replaceChildren(h('div', { class: `missing-season${isNew(m) ? ' glow' : ''}` },
+      h('div', { class: 'missing-title' }, `Temporada ${m.n}`),
       h('p', null, isNew(m) ? 'Ya se ha emitido, pero aún no está en el servidor.' : 'No está en el servidor.'),
       h('p', { class: 'muted' }, [
         `Se estrenó el ${fmtDate(m.premiere)}`,
@@ -244,7 +244,7 @@ async function seriesSection(series, wantedSeason) {
       if (news?.eps && season.IndexNumber === news.eps.season) {
         const e = news.eps;
         list.append(h('div', { class: 'episode episode-missing' },
-          h('div', { class: 'card-art' }, h('span', { class: 'dot-new' }), h('span', { class: 'missing-count' }, e.toEp > e.fromEp ? `E${e.fromEp}–${e.toEp}` : `E${e.fromEp}`)),
+          h('div', { class: 'card-art' }, h('span', { class: 'missing-count' }, e.toEp > e.fromEp ? `E${e.fromEp}–${e.toEp}` : `E${e.fromEp}`)),
           h('div', { class: 'episode-num' }, e.toEp > e.fromEp ? `Episodios ${e.fromEp} a ${e.toEp}` : `Episodio ${e.fromEp}`),
           h('div', { class: 'episode-title' }, 'Aún no están en el servidor'),
           h('div', { class: 'muted small' }, `Emitidos desde el ${fmtDate(e.premiere)}`)));
@@ -260,13 +260,13 @@ async function seriesSection(series, wantedSeason) {
   // Seasons in order, with the missing ones in their place.
   const pending = [...(news?.missing || [])];
   const missingPill = (m) => {
-    const pill = h('button', { class: 'pill missing', title: 'Aún no está en el servidor', onclick: () => showMissing(m, pill) }, isNew(m) ? h('span', { class: 'dot-new inline' }) : null, `Temporada ${m.n}`);
+    const pill = h('button', { class: `pill missing${isNew(m) ? ' glow' : ''}`, title: 'Aún no está en el servidor', onclick: () => showMissing(m, pill) }, `Temporada ${m.n}`);
     return pill;
   };
   for (const s of seasons) {
     while (pending.length && s.IndexNumber > pending[0].n) pills.append(missingPill(pending.shift()));
     const hasNewEps = news?.eps && s.IndexNumber === news.eps.season;
-    pills.append(h('button', { class: 'pill', dataset: { id: s.Id }, onclick: () => load(s) }, s.Name, hasNewEps ? h('span', { class: 'dot-new inline after' }) : null));
+    pills.append(h('button', { class: `pill${hasNewEps ? ' glow' : ''}`, title: hasNewEps ? 'Hay episodios emitidos que aún no están en el servidor' : null, dataset: { id: s.Id }, onclick: () => load(s) }, s.Name));
   }
   for (const m of pending) pills.append(missingPill(m));
   load(current);
@@ -310,7 +310,6 @@ function missingNote(series, header) {
   const f = newFor(series.Id);
   if (!f) return;
   const note = h('div', { class: 'new-season-note' },
-    h('span', { class: 'dot-new inline' }),
     h('span', null, `${describeNew(f)} en el servidor.`),
     button('No avisar', { onclick: () => { hideNewSeason(f); note.remove(); } }));
   header.querySelector('.detail-info')?.append(note);

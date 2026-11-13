@@ -3,7 +3,7 @@
 // no key; found through the TVDB/IMDb ids Jellyfin keeps, or by name and year). It reports
 //  - seasons that have aired and aren't on the NAS, and
 //  - for a season still airing (or just finished), aired episodes that aren't on the NAS yet.
-// A series with something new gets a green dot on its card, and its page says exactly which seasons
+// A series with something new gets a purple glowing border on its card, and its page says exactly which seasons
 // and episodes are missing (this file only finds it out; cards.js and views/item.js draw it).
 // Checked at most every 12 hours, in the background.
 import { ctx } from './context.js';
@@ -183,7 +183,7 @@ export function newSeasons({ force = false } = {}) {
 }
 
 // Seasons after the newest one on the NAS: those are news. Older gaps (seasons you never kept) are only
-// listed on the series page, without a dot.
+// listed on the series page, without the purple border.
 function newer(f) {
   return f.missing.filter((m) => m.n > f.have);
 }
@@ -212,7 +212,7 @@ export function missingFor(seriesId) {
 }
 
 // The same, only when there is something NEW (a later season, or new episodes) the user hasn't hidden:
-// this is what earns the green dot.
+// this is what earns the purple border.
 export function newFor(seriesId) {
   const f = missingFor(seriesId);
   return f && (newer(f).length || f.eps) && visible([f]).length ? f : null;
@@ -228,19 +228,19 @@ export function describeNew(f) {
   return `${ns.length > 1 || (f.eps && (ns.length || f.eps.toEp > f.eps.fromEp)) ? 'Faltan' : 'Falta'} ${parts.join(' y ')}`;
 }
 
-// The green dot on series cards already on screen (cards drawn later get theirs in cards.js).
+// The purple glowing border on series cards already on screen (cards drawn later get theirs in cards.js).
 export function markCards(root = document) {
   for (const card of root.querySelectorAll('.card[data-series]')) {
     const f = newFor(card.dataset.series);
-    const dot = card.querySelector('.dot-new');
-    if (f && !dot) card.querySelector('.card-art')?.append(newDot(f));
-    else if (!f && dot) dot.remove();
+    const glow = card.querySelector('.glow-new');
+    if (f && !glow) card.querySelector('.card-art')?.append(newGlow(f));
+    else if (!f && glow) glow.remove();
   }
 }
 
-export function newDot(f) {
-  const dot = document.createElement('span');
-  dot.className = 'dot-new';
-  dot.title = `${describeNew(f)} en el servidor`;
-  return dot;
+export function newGlow(f) {
+  const glow = document.createElement('span');
+  glow.className = 'glow-new';
+  glow.title = `${describeNew(f)} en el servidor`;
+  return glow;
 }

@@ -3,12 +3,12 @@ import { icons } from './icons.js';
 import { ctx } from './context.js';
 import { posterSrc, thumbSrc, progressOf } from './media.js';
 import { attachCardActions } from './cardmenu.js';
-import { newFor, newDot } from './seasons.js';
+import { newFor, newGlow } from './seasons.js';
 
-// Series with seasons or episodes out that aren't on the server yet get a green dot.
+// Series with seasons or episodes out that aren't on the server yet get a purple glowing border.
 function seriesDot(item) {
   const f = item.Type === 'Series' ? newFor(item.Id) : null;
-  return f ? newDot(f) : null;
+  return f ? newGlow(f) : null;
 }
 
 function seriesData(item) {

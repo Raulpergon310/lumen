@@ -34,7 +34,7 @@ export async function homeView({ isStale }) {
     discover,
     forYou,
   ].filter(Boolean);
-  // Temporadas y episodios que faltan: se comprueba en segundo plano y las series afectadas llevan un punto verde.
+  // Temporadas y episodios que faltan: se comprueba en segundo plano y las series afectadas llevan un borde morado.
   import('../seasons.js').then((m) => m.newSeasons()).catch(() => {});
   loadRecommendations(libs, forYou, discover);
 
