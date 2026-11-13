@@ -7,8 +7,14 @@
 //              With an external player (mpv on Windows, VLC on the TV) it goes there as-is; without one
 //              (a plain browser) only what the browser truly can't decode ends up here.
 import { capabilities } from './profile.js';
+import { store } from './store.js';
+import { softAudioSupported } from './soft-audio.js';
 
 const APP_AUDIO = new Set(['aac', 'mp3', 'opus', 'flac', 'vorbis']);
+// Audio the app decodes by itself (soft-audio.js) while the picture plays from the original file.
+const SOFT_AUDIO = new Set(['ac3', 'eac3']);
+// Not on the TV: its WebView doesn't play MKV as-is and the box's CPU is slow.
+const softAudioOk = () => !window.LumenTV && store.get('softAudio', true) && softAudioSupported();
 export const IMAGE_SUBS = /^(pgssub|pgs|dvdsub|dvbsub|vobsub|hdmv_pgs_subtitle|dvd_subtitle)$/i;
 
 // external: an mpv/VLC is there to take what the app doesn't show at its best (HDR tone mapping, image
@@ -56,8 +62,20 @@ export function playbackPlan(ms, { external = true } = {}) {
   const audio = audios.find((a) => a.Index === audioIndex) || audios[0];
   if (audio && mode === 'direct') {
     const codec = (audio.Codec || '').toLowerCase();
-    const appAudio = APP_AUDIO.has(codec) || (codec === 'ac3' && c.ac3) || (codec === 'eac3' && c.eac3);
-    if (!appAudio) return { mode: 'remux', reason: `audio ${codec.toUpperCase()}` };
+    const plays = (a) => {
+      const x = (a.Codec || '').toLowerCase();
+      return APP_AUDIO.has(x) || (x === 'ac3' && c.ac3) || (x === 'eac3' && c.eac3);
+    };
+    const appAudio = plays(audio);
+    if (!appAudio) {
+      // Dolby Digital (Plus): the original file plays as-is and the app decodes its sound, so the
+      // server converts nothing. Not when the file also has a track the <video> would play by itself
+      // (it would sound on top), nor for a separate audio file.
+      if (SOFT_AUDIO.has(codec) && !audio.IsExternal && !audios.some(plays) && softAudioOk()) {
+        return { mode: 'direct', softAudio: true, reason: `audio ${codec.toUpperCase()}` };
+      }
+      return { mode: 'remux', reason: `audio ${codec.toUpperCase()}` };
+    }
     // The app can't pick a different audio track inside the original file.
     if (audios.length > 1 && audio !== audios[0]) return { mode: 'remux', reason: 'pista de audio' };
   }

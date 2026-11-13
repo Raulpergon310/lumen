@@ -8,6 +8,7 @@ import { playbackPlan, onlyAudioConverted, keepsOriginalPicture, transcodeReason
 import { chooseSubtitle } from './subs.js';
 import { mpvAvailable, openMpv, probeSource } from './mpv-player.js';
 import { IS_TV } from './tv.js';
+import { SoftAudio } from './soft-audio.js';
 
 const TICKS = 1e7;
 const JASSUB_BASE = new URL('../vendor/jassub/', import.meta.url).href;
@@ -279,17 +280,28 @@ class Player {
     const firstDirect = allowDirect && known?.mode !== 'remux';
     // A file the app plays as-is can start from the answer the detail page already fetched.
     const reuse = firstDirect && known?.mode === 'direct' && knownInfo?.MediaSources?.[0] && audioIndex == null && subIndex == null;
-    let info = reuse ? knownInfo : await request(firstDirect, audioIndex, subIndex);
-    let ms = info.MediaSources[0];
-
     // Our own codec check decides (it ignores e.g. the server's remote bitrate cap). Files whose audio the
     // app can't decode (Dolby Digital, DTS…) or that use another audio track keep the original video and
     // only get their audio converted by the server.
-    const wantedAudio = audioIndex ?? ms.DefaultAudioStreamIndex;
-    const chosenSub = subIndex ?? chooseSubtitle(ms, wantedAudio).index ?? ms.DefaultSubtitleStreamIndex ?? -1;
-    // Image subtitles (PGS, DVD) would force the server to redraw the whole picture: without the OK to
-    // convert, a text version in the same language is used, or none.
-    const wantedSub = convertOk ? chosenSub : textSubtitleFor(ms, chosenSub);
+    const tracksFor = (src, quiet) => {
+      const audio = audioIndex ?? src.DefaultAudioStreamIndex;
+      const sub = subIndex ?? chooseSubtitle(src, audio).index ?? src.DefaultSubtitleStreamIndex ?? -1;
+      // Image subtitles (PGS, DVD) would force the server to redraw the whole picture: without the OK to
+      // convert, a text version in the same language is used, or none.
+      return { audio, sub, shownSub: convertOk ? sub : textSubtitleFor(src, sub, quiet) };
+    };
+
+    let info;
+    if (reuse) info = knownInfo;
+    else if (!firstDirect && knownInfo?.MediaSources?.[0]) {
+      // Known to need the server and the file's tracks are already known: ask once, for the right
+      // tracks, instead of asking blind and then again (each question costs the NAS time).
+      const pre = tracksFor(knownInfo.MediaSources[0], true);
+      info = await request(false, pre.audio, pre.shownSub);
+    } else info = await request(firstDirect, audioIndex, subIndex);
+    let ms = info.MediaSources[0];
+
+    const { audio: wantedAudio, sub: chosenSub, shownSub: wantedSub } = tracksFor(ms, false);
     const plan = playbackPlan({ ...ms, DefaultAudioStreamIndex: wantedAudio, DefaultSubtitleStreamIndex: wantedSub }, { external: false });
     const direct = allowDirect && plan.mode === 'direct';
     if (!direct && (reuse || asked.direct || asked.audio !== wantedAudio || asked.sub !== wantedSub)) {
@@ -353,6 +365,7 @@ class Player {
       this.triesMkv = triesMkv;
       v.src = url;
       this.armDirectPlayWatchdog();
+      if (plan.softAudio) this.startSoftAudio(url, ms, wantedAudio);
     } else {
       this.method = converting ? 'Transcode' : 'DirectStream';
       if (/\.m3u8/i.test(streamUrl) && window.Hls?.isSupported()) this.attachHls(streamUrl, startSec);
@@ -433,6 +446,20 @@ class Player {
     this.hls = hls;
   }
 
+  // The picture plays from the original file; its Dolby sound is decoded here (soft-audio.js). If that
+  // fails, the next best thing takes over at the same spot (mpv on Windows, else the server's audio).
+  startSoftAudio(url, ms, audioIndex) {
+    const audios = (ms.MediaStreams || []).filter((s) => s.Type === 'Audio' && !s.IsExternal);
+    const ordinal = Math.max(0, audios.findIndex((a) => a.Index === audioIndex));
+    const failed = (e) => {
+      if (this.soft !== soft || this.closed) return;
+      log(`soft audio falló: ${e?.message || e}`);
+      this.fallbackToTranscode({ keepMkv: true });
+    };
+    const soft = (this.soft = new SoftAudio(this.video, { url, ordinal, log, onError: failed }));
+    soft.start().catch(failed);
+  }
+
   // Some files claim to be playable but never start; fall back to the server repackaging them.
   // A slow connection isn't a reason: once the picture is known (metadata with a size), it's just loading.
   armDirectPlayWatchdog() {
@@ -456,11 +483,11 @@ class Player {
 
   // The original file didn't start. Next best thing: the same picture repackaged by the server (light
   // work for the NAS). A real conversion only comes after that, and only with the user's OK.
-  async fallbackToTranscode() {
+  async fallbackToTranscode({ keepMkv = false } = {}) {
     if (this.fellBack) return;
     this.fellBack = true;
     const at = this.video.currentTime || 0;
-    if (this.triesMkv) learnMkv(false); // this device doesn't play MKV as-is: don't try it again
+    if (this.triesMkv && !keepMkv) learnMkv(false); // this device doesn't play MKV as-is: don't try it again
     // In automatic mode a file the app can't handle moves to mpv at the same spot.
     if (store.get('player', 'auto') === 'auto' && await mpvAvailable()) {
       const item = this.item;
@@ -477,6 +504,10 @@ class Player {
     clearTimeout(this.watchdog);
     clearInterval(this.stallTimer);
     this.clearClientSubs();
+    if (this.soft) {
+      this.soft.destroy();
+      this.soft = null;
+    }
     if (this.hls) {
       this.hls.destroy();
       this.hls = null;
@@ -910,7 +941,7 @@ class Player {
     if (this.method === 'DirectPlay') {
       kind = 'direct';
       label = 'Reproducción directa';
-      detail = `Archivo original · ${[videoTxt, audioTxt].filter(Boolean).join(' · ')}`;
+      detail = `Archivo original · ${[videoTxt, audioTxt].filter(Boolean).join(' · ')}${this.soft ? ' (sonido decodificado en la app)' : ''}`;
     } else if (this.method === 'DirectStream' && !transcodeReasonList(ms.TranscodingUrl).some((r) => /^Audio/.test(r))) {
       kind = 'direct';
       label = 'Directo · reempaquetado';
@@ -1078,14 +1109,14 @@ function languageName(code) {
 class NeedsTranscodeError extends Error {}
 
 // A text subtitle to use instead of an image one (same language, same forced-ness if possible), or -1.
-function textSubtitleFor(ms, index) {
+function textSubtitleFor(ms, index, quiet = false) {
   const subs = (ms.MediaStreams || []).filter((s) => s.Type === 'Subtitle');
   const s = subs.find((x) => x.Index === index);
   if (!s || !IMAGE_SUBS.test(s.Codec || '')) return index;
   const text = subs.filter((x) => !IMAGE_SUBS.test(x.Codec || '') && (x.Language || '') === (s.Language || ''));
   const alt = text.find((x) => !!x.IsForced === !!s.IsForced) || (s.IsForced ? null : text[0]);
   if (alt) return alt.Index;
-  toast('Los subtítulos de este archivo son imágenes y para verlos habría que convertir el vídeo: se reproduce sin ellos.');
+  if (!quiet) toast('Los subtítulos de este archivo son imágenes y para verlos habría que convertir el vídeo: se reproduce sin ellos.');
   return -1;
 }
 

@@ -5,6 +5,8 @@ const ROOT = __dirname;
 const MOUNTS = [
   ['/vendor/hls/', path.join(ROOT, 'node_modules', 'hls.js', 'dist')],
   ['/vendor/jassub/', path.join(ROOT, 'node_modules', 'jassub', 'dist')],
+  ['/vendor/mediabunny/', path.join(ROOT, 'node_modules', 'mediabunny', 'dist', 'bundles')],
+  ['/vendor/mediabunny-ac3/', path.join(ROOT, 'node_modules', '@mediabunny', 'ac3', 'dist', 'bundles')],
   ['/', path.join(ROOT, 'src')],
 ];
 

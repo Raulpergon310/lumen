@@ -3,7 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' app: blob: data:; img-src * data: blob:; media-src * blob: data:; connect-src *; script-src 'self' app: 'wasm-unsafe-eval'; worker-src 'self' app: blob:; style-src 'self' app: 'unsafe-inline'; font-src * data: blob:">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' app: blob: data:; img-src * data: blob:; media-src * blob: data:; connect-src *; script-src 'self' app: 'wasm-unsafe-eval' 'sha256-kF54XaOJ9GOti4eaVUVB8yhHFa/05nvhDaY5LaCv21Y='; worker-src 'self' app: blob:; style-src 'self' app: 'unsafe-inline'; font-src * data: blob:">
+  <!-- Names used by js/soft-audio.js. The policy above allows this exact text by its sha256: change one and the other must follow. -->
+  <script type="importmap">{"imports":{"mediabunny":"./vendor/mediabunny/mediabunny.min.mjs","@mediabunny/ac3":"./vendor/mediabunny-ac3/mediabunny-ac3.min.mjs"}}</script>
   <title>Lumen</title>
   <link rel="stylesheet" href="css/app.css">
 </head>

@@ -17,9 +17,11 @@
   "license": "MIT",
   "type": "commonjs",
   "dependencies": {
+    "@mediabunny/ac3": "1.64.0",
     "hls.js": "^1.7.3",
     "jassub": "1.8.8",
-    "koffi": "^2.16.3"
+    "koffi": "^2.16.3",
+    "mediabunny": "1.64.0"
   },
   "devDependencies": {
     "electron": "^45.0.0",
@@ -38,6 +40,8 @@
       "build/icon.png",
       "node_modules/hls.js/dist/hls.min.js",
       "node_modules/jassub/dist/**/*",
+      "node_modules/mediabunny/dist/bundles/mediabunny.min.mjs",
+      "node_modules/@mediabunny/ac3/dist/bundles/mediabunny-ac3.min.mjs",
       "node_modules/koffi/package.json",
       "node_modules/koffi/index.js",
       "node_modules/koffi/indirect.js",

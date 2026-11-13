@@ -16,6 +16,10 @@ fs.cpSync(path.join(root, 'src'), app, { recursive: true, filter: (f) => !/overl
 fs.mkdirSync(path.join(app, 'vendor', 'hls'), { recursive: true });
 fs.copyFileSync(path.join(root, 'node_modules/hls.js/dist/hls.min.js'), path.join(app, 'vendor/hls/hls.min.js'));
 fs.cpSync(path.join(root, 'node_modules/jassub/dist'), path.join(app, 'vendor/jassub'), { recursive: true });
+for (const [dir, from] of [['mediabunny', 'node_modules/mediabunny/dist/bundles/mediabunny.min.mjs'], ['mediabunny-ac3', 'node_modules/@mediabunny/ac3/dist/bundles/mediabunny-ac3.min.mjs']]) {
+  fs.mkdirSync(path.join(app, 'vendor', dir), { recursive: true });
+  fs.copyFileSync(path.join(root, from), path.join(app, 'vendor', dir, path.basename(from)));
+}
 fs.writeFileSync(path.join(app, 'js/build-info.js'), `export const BUILD = { version: '${pkg.version}', repo: '${repo}' };\n`);
 
 const fill = (s) => s.replaceAll('{{REPO}}', repo).replaceAll('{{VERSION}}', pkg.version);

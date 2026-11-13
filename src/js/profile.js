@@ -98,6 +98,11 @@ export function deviceProfile({ convert = false, maxBitrate } = {}) {
         AudioCodec: ['aac', c.eac3 && 'eac3', c.ac3 && 'ac3', c.flac && 'flac', 'mp3'].filter(Boolean).join(','),
         MaxAudioChannels: '6',
         MinSegments: 1,
+        // Repackaging (picture copied): one segment per keyframe. With Jellyfin's default of 6 s, a
+        // stream started mid-file (resume, seek) is cut at other points than its playlist says, a few
+        // seconds more off with every segment: playback then jumps ahead or falls behind by itself.
+        // Short segments also reach the screen sooner. A real conversion keeps the server's default.
+        ...(convert ? {} : { SegmentLength: 1 }),
         BreakOnNonKeyFrames: true,
         CopyTimestamps: false,
       },
