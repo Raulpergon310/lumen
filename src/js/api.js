@@ -132,7 +132,8 @@ export class Api {
   }
 
   // quiet: a failure of this request is not worth telling the user about (look-ahead, recommendations).
-  async send(path, { method = 'GET', query, body, timeout = 15000, quiet = false } = {}) {
+  // keepalive: the request outlives the page (closing the tab mid-playback).
+  async send(path, { method = 'GET', query, body, timeout = 15000, quiet = false, keepalive = false } = {}) {
     const headers = { Authorization: this.authHeader() };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     let r;
@@ -141,6 +142,7 @@ export class Api {
         method,
         headers,
         body: body !== undefined ? JSON.stringify(body) : undefined,
+        keepalive,
       }, timeout);
     } catch (e) {
       if (!quiet) this.onNetworkError?.(e);
@@ -295,11 +297,12 @@ export class Api {
     return p;
   }
 
-  stopEncoding(playSessionId) {
+  stopEncoding(playSessionId, { keepalive = false } = {}) {
     return this.send('/Videos/ActiveEncodings', {
       method: 'DELETE',
       query: { deviceId: this.deviceId, playSessionId },
       timeout: 5000,
+      keepalive,
     }).catch(() => {});
   }
 

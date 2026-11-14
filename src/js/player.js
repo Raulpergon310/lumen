@@ -16,6 +16,18 @@ const FONT_MIME = /font|truetype|opentype|ttf|otf|woff/i;
 
 let current = null;
 
+// A plain browser tab can be closed or reloaded mid-playback: tell the server where it stopped and
+// end any repackaging or conversion right away, instead of ffmpeg running on until the server's
+// own timeout. (The Windows app does this from its close handler.)
+if (!window.lumenHost) {
+  window.addEventListener('pagehide', () => {
+    const p = current;
+    if (!p || p.closed || !p.playSessionId || !ctx.api) return;
+    ctx.api.send('/Sessions/Playing/Stopped', { method: 'POST', body: p.reportBody(), keepalive: true }).catch(() => {});
+    if (p.method && p.method !== 'DirectPlay') ctx.api.stopEncoding(p.playSessionId, { keepalive: true });
+  });
+}
+
 window.lumenHost?.win.onFullscreen((on) => {
   if (current?.fsBtn) current.fsBtn.innerHTML = on ? icons.exitFullscreen : icons.fullscreen;
 });
