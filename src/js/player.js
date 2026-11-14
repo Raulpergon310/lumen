@@ -1063,6 +1063,13 @@ class Player {
         h('button', { class: 'btn btn-glass', onclick: () => this.startStream({ startSec: at, audioIndex: this.audioIndex, subIndex: this.subIndex, forceTranscode: true }).then(() => { this.forceTranscode = true; }).catch((e) => this.fail(e.message)) }, 'Convertir en el servidor'),
         h('button', { class: 'btn btn-glass', onclick: () => this.close() }, 'Salir'))));
     this.errorEl.hidden = false;
+    // Edge plays HEVC only with Windows' free extension: one click to its Store page.
+    if (/Edg\//.test(navigator.userAgent) && /HEVC/.test(message)) {
+      this.errorEl.querySelector('.actions').prepend(h('a', {
+        class: 'btn btn-primary',
+        href: 'ms-windows-store://pdp/?ProductId=9N4WGH0Z6VHQ',
+      }, 'Instalar extensión HEVC'));
+    }
     if (IS_TV) this.errorEl.querySelector('button')?.focus();
     mpvAvailable().then((ok) => {
       if (!ok || this.closed) return;
