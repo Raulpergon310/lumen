@@ -2,7 +2,7 @@ import { ctx } from './context.js';
 import { h, fmtTime, fmtEndsAt, episodeLabel, toast, image } from './ui.js';
 import { icons } from './icons.js';
 import { store, keepAwake, log } from './store.js';
-import { deviceProfile, capabilities, learnMkv, CONVERT_BITRATE } from './profile.js';
+import { deviceProfile, capabilities, learnMkv, learnHevc, hevcOnTrust, probeCapabilities, CONVERT_BITRATE } from './profile.js';
 import { thumbSrc } from './media.js';
 import { playbackPlan, onlyAudioConverted, keepsOriginalPicture, transcodeReasonList, IMAGE_SUBS } from './compat.js';
 import { chooseSubtitle } from './subs.js';
@@ -242,6 +242,9 @@ class Player {
     await this.teardownStream();
     if (this.closed) return;
 
+    await probeCapabilities();
+    if (this.closed) return;
+
     const convertOk = forceTranscode || store.get('allowTranscode', false);
     const convertBitrate = store.get('maxBitrate', 0) || CONVERT_BITRATE;
     const allowDirect = !forceTranscode && !noDirect && store.get('preferDirectPlay', true);
@@ -359,10 +362,15 @@ class Player {
         PlaySessionId: this.playSessionId,
       });
       const triesMkv = /mkv|matroska/i.test(ms.Container || '') && !capabilities().mkvNative;
+      // HEVC the browser said it can't decode, played on trust (profile.js): its first real frame decides.
+      const pic = (ms.MediaStreams || []).find((s) => s.Type === 'Video');
+      const hevcBits = /hevc|h265/i.test(pic?.Codec || '') && hevcOnTrust(pic.BitDepth || 8) ? pic.BitDepth || 8 : 0;
+      this.triesHevc = hevcBits;
       v.addEventListener('loadedmetadata', () => {
         if (startSec > 0 && Math.abs(v.currentTime - startSec) > 1) v.currentTime = startSec;
         if (triesMkv && v.videoWidth > 0) learnMkv(true);
       }, { once: true });
+      if (pic) this.watchPicture(hevcBits);
       this.triesMkv = triesMkv;
       // "#t=": the file is opened straight at the resume point instead of at 0 and then moved.
       v.src = startSec > 0 ? `${url}#t=${startSec.toFixed(2)}` : url;
@@ -479,6 +487,43 @@ class Player {
     }, 15000);
   }
 
+  // A file the browser opens but whose picture it can't decode plays with sound and a black screen
+  // (Chrome drops the video track, Edge without the HEVC extension the same): no frame ever arrives.
+  // That counts as a failed direct play. When HEVC was played on trust, its result is remembered.
+  watchPicture(hevcBits) {
+    const v = this.video;
+    const token = (this.picToken = Symbol('pic'));
+    const live = () => token === this.picToken && !this.closed && this.method === 'DirectPlay';
+    const noPicture = (why) => {
+      if (!live()) return;
+      log(`direct play sin imagen (${why})`);
+      this.fallbackToTranscode();
+    };
+    const gotPicture = () => {
+      if (!live()) return;
+      clearTimeout(this.pictureTimer);
+      this.picToken = null;
+      if (hevcBits) {
+        learnHevc(hevcBits, true);
+        log(`HEVC ${hevcBits} bits se reproduce en directo en este navegador`);
+      }
+    };
+    v.addEventListener('loadeddata', () => {
+      if (!live()) return;
+      if (!v.videoWidth) return noPicture('pista de vídeo descartada');
+      if (typeof v.requestVideoFrameCallback === 'function') v.requestVideoFrameCallback(gotPicture);
+      else gotPicture();
+    }, { once: true });
+    // Playing for a while with no frame shown: the decoder refused the picture.
+    v.addEventListener('playing', () => {
+      if (!live()) return;
+      clearTimeout(this.pictureTimer);
+      this.pictureTimer = setTimeout(() => {
+        if (live() && !v.paused && (!v.videoWidth || v.getVideoPlaybackQuality?.().totalVideoFrames === 0)) noPicture('ningún fotograma');
+      }, 8000);
+    }, { once: true });
+  }
+
   onVideoError() {
     if (this.hls || this.closed || !this.video.getAttribute('src')) return;
     const err = this.video.error;
@@ -493,7 +538,10 @@ class Player {
     if (this.fellBack) return;
     this.fellBack = true;
     const at = this.video.currentTime || 0;
-    if (this.triesMkv && !keepMkv) learnMkv(false); // this device doesn't play MKV as-is: don't try it again
+    // This device doesn't play it as-is: don't try it again. HEVC played on trust is the likelier culprit
+    // (browsers play MKV far more often than they admit), so then only that is remembered.
+    if (this.triesHevc) learnHevc(this.triesHevc, false);
+    else if (this.triesMkv && !keepMkv) learnMkv(false);
     // In automatic mode a file the app can't handle moves to mpv at the same spot.
     if (store.get('player', 'auto') === 'auto' && await mpvAvailable()) {
       const item = this.item;
@@ -508,6 +556,9 @@ class Player {
 
   async teardownStream() {
     clearTimeout(this.watchdog);
+    clearTimeout(this.pictureTimer);
+    this.picToken = null;
+    this.triesHevc = 0;
     clearInterval(this.stallTimer);
     this.clearClientSubs();
     if (this.soft) {
@@ -1220,8 +1271,23 @@ function transcodeReasons(urlOrReason, plan) {
     ? 'Con mpv (Ajustes → Reproductor) se reproduce sin convertir.'
     : window.LumenTV
       ? 'Con VLC instalado en la tele se reproduce sin convertir.'
-      : 'Prueba a abrir Lumen en Chrome, Edge o Safari, que reproducen HEVC sin convertir.';
+      : browserFix(plan);
   return `Este equipo no puede reproducir este archivo en directo${why}, y convertirlo carga mucho el servidor. ${fix}`;
+}
+
+// In a plain browser, HEVC depends on the browser and on this computer's graphics: say what to change.
+function browserFix(plan) {
+  const ua = navigator.userAgent;
+  const hevc = /HEVC/i.test(plan?.reason || '');
+  if (!hevc) return 'Prueba a abrir Lumen en Chrome o Edge, o usa la app de Windows, que lo reproduce todo sin convertir.';
+  if (/Edg\//.test(ua)) {
+    return 'A Edge le falta la extensión gratuita «Extensiones de vídeo HEVC del fabricante del dispositivo» de Microsoft Store. Instálala y reinicia Edge, o abre Lumen en Chrome, que lo reproduce sin ella.';
+  }
+  if (/Firefox\//.test(ua)) return 'Firefox apenas reproduce HEVC: abre Lumen en Chrome o Edge, o usa la app de Windows.';
+  if (/Chrome\//.test(ua)) {
+    return 'Chrome reproduce HEVC con la tarjeta gráfica: activa «Usar aceleración gráfica cuando esté disponible» en chrome://settings/system, reinicia Chrome y pulsa Reintentar. Si la gráfica es antigua, usa la app de Windows.';
+  }
+  return 'Prueba a abrir Lumen en Chrome o Edge, o usa la app de Windows, que lo reproduce todo sin convertir.';
 }
 
 function playbackError(code) {

@@ -47,7 +47,7 @@ export function playbackPlan(ms, { external = true } = {}) {
     const codec = (video.Codec || '').toLowerCase();
     const bits = video.BitDepth || 8;
     const ok = (codec === 'h264' && bits <= 8)
-      || (codec === 'hevc' && (bits <= 8 ? c.hevc : c.hevc10))
+      || (codec === 'hevc' && (bits <= 8 ? c.hevcDirect : c.hevc10Direct))
       || (codec === 'av1' && c.av1)
       || (codec === 'vp9' && c.vp9)
       || codec === 'vp8';
