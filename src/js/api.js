@@ -227,6 +227,32 @@ export class Api {
     });
   }
 
+  // Which other users of the server have seen (or are watching) this item. Only an administrator
+  // may read other users' data; for anyone else the server refuses and this returns [].
+  async watchedBy(id) {
+    let users;
+    try {
+      users = await this.req('/Users', { background: true, timeout: 8000 });
+    } catch {
+      return [];
+    }
+    const others = (users || []).filter((u) => u.Id !== this.userId && !u.Policy?.IsDisabled);
+    const seen = await Promise.all(others.map(async (u) => {
+      try {
+        const it = await this.reqAlt([`/Items/${id}`, `/Users/${u.Id}/Items/${id}`], {
+          background: true, timeout: 8000, query: { userId: u.Id, Fields: 'ChildCount' },
+        });
+        const ud = it?.UserData || {};
+        const pct = ud.PlayedPercentage || (it?.RunTimeTicks && ud.PlaybackPositionTicks ? ud.PlaybackPositionTicks / it.RunTimeTicks * 100 : 0);
+        if (!ud.Played && !pct) return null;
+        return { id: u.Id, name: u.Name, imageTag: u.PrimaryImageTag, played: !!ud.Played, pct: Math.round(pct), lastPlayed: ud.LastPlayedDate || null };
+      } catch {
+        return null;
+      }
+    }));
+    return seen.filter(Boolean).sort((a, b) => (b.played - a.played) || String(b.lastPlayed).localeCompare(String(a.lastPlayed)));
+  }
+
   async seasons(seriesId) {
     const r = await this.req(`/Shows/${seriesId}/Seasons`, { query: { userId: this.userId, Fields: 'Overview', ...IMAGE_QUERY } });
     return r.Items || [];
