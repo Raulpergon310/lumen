@@ -960,3 +960,20 @@ a.person:hover .person-img { transform: scale(1.05); box-shadow: 0 0 0 3px rgba(
 .pending-empty-icon svg { width: 28px; height: 28px; color: #a78bfa; display: block; }
 .pending-empty p { margin: 4px 0 0; }
 .pending-grid { padding: 0; }
+.pending-banner-slot { padding: 0 var(--pad); margin-bottom: 28px; }
+.pending-banner-slot:empty { display: none; }
+.pending-banner { position: relative; display: flex; align-items: center; gap: 24px; padding: 20px 64px 20px 24px; border-radius: 18px; overflow: hidden;
+  background: linear-gradient(120deg, rgba(124, 58, 237, 0.45), rgba(76, 29, 149, 0.25) 50%, rgba(139, 92, 246, 0.08)); border: 1px solid rgba(167, 139, 250, 0.35);
+  transition: transform 0.2s var(--ease), box-shadow 0.2s; }
+.pending-banner:hover { transform: translateY(-2px); box-shadow: 0 12px 36px rgba(124, 58, 237, 0.3); }
+.pending-banner-text { display: flex; align-items: center; gap: 16px; min-width: 200px; }
+.pending-banner-icon { width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; background: rgba(167, 139, 250, 0.25); flex: none; }
+.pending-banner-icon svg { width: 26px; height: 26px; color: #e9e1ff; }
+.pending-banner h2 { margin: 0; font-size: 24px; }
+.pending-banner p { margin: 2px 0 0; color: #d8c9ff; font-size: 14px; }
+.pending-banner-posters { display: flex; margin-left: auto; padding-left: 20px; }
+.pending-banner-poster { width: 64px; aspect-ratio: 2 / 3; border-radius: 8px; overflow: hidden; margin-left: -18px; box-shadow: -6px 0 16px rgba(0, 0, 0, 0.5); flex: none; }
+.pending-banner-poster:nth-child(even) { transform: translateY(6px); }
+.pending-banner-go { position: absolute; right: 22px; top: 50%; transform: translateY(-50%); }
+.pending-banner-go svg { width: 22px; height: 22px; display: block; }
+@media (max-width: 640px) { .pending-banner-posters { display: none; } }

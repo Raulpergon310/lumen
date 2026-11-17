@@ -1,14 +1,18 @@
 // Pendientes: everything waiting to be watched in one place. Your "Tengo que verla" list and what
 // friends have recommended to you, with a way to take things off. Needs the friends service.
 import { h, toast } from '../ui.js';
+import { ctx } from '../context.js';
 import { icons } from '../icons.js';
 import { posterCard } from '../cards.js';
 import { configured, waitForSocial, social } from '../social.js';
+
+const boxsets = () => ctx.views?.find((v) => v.CollectionType === 'boxsets');
 
 export async function pendingView({ isStale }) {
   const body = h('div', { class: 'pending-body' }, waiting('Conectando con el servicio de amigos…'));
   const page = h('div', { class: 'page pending' },
     h('div', { class: 'pending-head' },
+      boxsets() ? h('a', { class: 'eyebrow-link', href: `#/library/${boxsets().Id}` }, '‹ Colecciones') : null,
       h('h1', null, 'Pendientes'),
       h('p', { class: 'muted' }, 'Lo que tienes guardado para ver y lo que te recomiendan tus amigos.')),
     body);

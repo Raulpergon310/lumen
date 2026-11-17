@@ -1,5 +1,7 @@
-import { h, spinner, emptyState } from '../ui.js';
+import { h, spinner, emptyState, image } from '../ui.js';
 import { ctx } from '../context.js';
+import { icons } from '../icons.js';
+import { posterSrc } from '../media.js';
 import { store } from '../store.js';
 import { posterCard, row } from '../cards.js';
 
@@ -114,6 +116,7 @@ export async function libraryView({ params: [id], query = {} }) {
         genre ? h('a', { class: 'eyebrow-link', href: `#/library/${id}?view=categories` }, `‹ ${view.Name} · Categorías`) : null,
         h('h1', null, genre ? query.name || 'Categoría' : view.Name), count),
       h('div', { class: 'lib-tools' }, filterPills, sortSelect)),
+    view.CollectionType === 'boxsets' && !genre ? pendingBanner() : null,
     holder,
     sentinel);
 
@@ -175,4 +178,23 @@ async function categoriesView(id, view, type) {
     h('div', { class: 'lib-head' }, h('div', null, h('h1', null, view.Name), h('span', { class: 'lib-count' }, `${genres.length} categorías`))),
     slots.length ? slots : h('p', { class: 'muted center' }, 'Esta biblioteca no tiene géneros.'));
   return { node, cleanup: () => io.disconnect() };
+}
+// Colecciones: "Pendientes" goes first, as a collection of its own (your list and friends' tips).
+function pendingBanner() {
+  const box = h('div', { class: 'pending-banner-slot' });
+  import('../social.js').then(async ({ waitForSocial }) => {
+    if (!(await waitForSocial({ maxMs: 60000 }))) return;
+    const { loadPending } = await import('../friends.js');
+    const { recs, list } = await loadPending();
+    const items = [...list.map((w) => w.item), ...recs.map((r) => r.item)];
+    const n = (x, one, many) => `${x} ${x === 1 ? one : many}`;
+    const sub = [list.length ? n(list.length, 'guardada', 'guardadas') : '', recs.length ? n(recs.length, 'recomendación', 'recomendaciones') : ''].filter(Boolean).join(' · ') || 'Guarda aquí lo que quieras ver';
+    box.replaceChildren(h('a', { class: 'pending-banner', href: '#/pending' },
+      h('div', { class: 'pending-banner-text' },
+        h('span', { class: 'pending-banner-icon', html: icons.bookmarkFill }),
+        h('div', null, h('h2', null, 'Pendientes'), h('p', null, sub))),
+      h('div', { class: 'pending-banner-posters' }, items.slice(0, 6).map((it) => image(posterSrc(ctx.api, it, 200), { cls: 'pending-banner-poster', placeholder: it.Name }))),
+      h('span', { class: 'pending-banner-go', html: icons.next })));
+  }).catch(() => {});
+  return box;
 }

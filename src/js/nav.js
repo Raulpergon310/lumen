@@ -35,8 +35,9 @@ export function renderNav(nav) {
     h('a', { class: 'brand', href: '#/home', title: 'Inicio', html: logo }),
     h('nav', { class: 'tabs' },
       h('a', { href: '#/home', dataset: { path: '/home' } }, 'Inicio'),
-      h('a', { href: '#/pending', dataset: { path: '/pending' } }, 'Pendientes'),
-      libs.map((v) => h('a', { href: `#/library/${v.Id}`, dataset: { path: `/library/${v.Id}` } }, v.Name))),
+      // Pendientes lives inside Colecciones; only without that library does it get its own tab.
+      libs.some((v) => v.CollectionType === 'boxsets') ? null : h('a', { href: '#/pending', dataset: { path: '/pending' } }, 'Pendientes'),
+      libs.map((v) => h('a', { href: `#/library/${v.Id}`, dataset: { path: `/library/${v.Id}`, also: v.CollectionType === 'boxsets' ? '/pending' : '' } }, v.Name))),
     h('div', { class: 'nav-right' },
       h('a', { class: 'icon-btn', href: '#/search', title: 'Buscar', dataset: { path: '/search' }, html: icons.search }),
       h('div', { class: 'avatar-wrap' }, avatar, menu)),
@@ -45,6 +46,6 @@ export function renderNav(nav) {
 
 export function updateNav(nav, path) {
   for (const a of nav.querySelectorAll('[data-path]')) {
-    a.classList.toggle('active', a.dataset.path === path);
+    a.classList.toggle('active', a.dataset.path === path || (!!a.dataset.also && a.dataset.also === path));
   }
 }
