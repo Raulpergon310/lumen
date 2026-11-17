@@ -26,7 +26,7 @@ function known() {
 
 // Where to look: the known addresses plus guesses next to Jellyfin: the default port at home (http),
 // and from outside (https) the next port up (Jellyfin on :8443 → service on :8444) or the
-// /lumen-social path of the same proxy. An https page can't talk to a plain http service.
+// /lumen-social path of the same proxy.
 function candidates() {
   const server = ctx.savedServers?.().find((s) => s.id === ctx.server?.id);
   const list = [...known()];
@@ -43,9 +43,11 @@ function candidates() {
   return usable(list);
 }
 
+// Every address is tried, http ones too even from the https web: Chrome lets an https page talk to
+// http addresses on the home network (that is how it reaches Jellyfin at home), and one that the
+// browser blocks simply doesn't answer while the others are tried at the same time.
 function usable(list) {
-  const httpsPage = location.protocol === 'https:';
-  return [...new Set(list.filter(Boolean).map(normalize))].filter((u) => !httpsPage || u.startsWith('https:'));
+  return [...new Set(list.filter(Boolean).map(normalize))];
 }
 
 export function normalize(url) {
