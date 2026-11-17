@@ -12,6 +12,7 @@ import { libraryView } from './views/library.js';
 import { searchView } from './views/search.js';
 import { personView } from './views/person.js';
 import { settingsView } from './views/settings.js';
+import { panelView } from './views/panel.js';
 import { playbackPlan } from './compat.js';
 import { chooseSubtitle, fetchSpanishSubtitles } from './subs.js';
 
@@ -28,6 +29,7 @@ const routes = [
   [/^\/search$/, searchView],
   [/^\/person\/([^/]+)$/, personView],
   [/^\/settings$/, settingsView],
+  [/^\/panel$/, panelView],
 ];
 
 // ---------- errors never leave a blank screen ----------

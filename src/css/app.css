@@ -811,3 +811,49 @@ a.person:hover .person-img { transform: scale(1.05); box-shadow: 0 0 0 3px rgba(
 .tv .star, .tv .friend { transition: background 0.15s ease-out, color 0.15s ease-out, transform 0.18s ease-out; }
 .tv .star:focus { transform: scale(1.25); color: #ffd60a; box-shadow: 0 0 0 2px #fff; }
 .tv .friend:focus { background: #fff; color: #000; }
+
+/* Panel (views/panel.js) */
+.panel { padding: calc(var(--nav-h) + 28px) var(--pad) 80px; max-width: 1400px; }
+.panel h1 { font-size: 34px; margin-bottom: 8px; }
+.panel-section { margin-top: 34px; }
+.panel-section > h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--faint); margin-bottom: 12px; }
+.panel h3 { font-size: 15px; margin: 22px 0 10px; color: var(--muted); font-weight: 600; }
+.panel-card h3 { margin-top: 0; }
+.panel-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+.panel-tile, .panel-card { background: var(--surface); border-radius: var(--radius); padding: 16px 18px; }
+.panel-tile { display: flex; flex-direction: column; gap: 6px; }
+.panel-tile-label { font-size: 13px; color: var(--faint); }
+.panel-tile-value { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; }
+.panel-meter { height: 6px; border-radius: 99px; background: rgba(255, 255, 255, 0.1); overflow: hidden; }
+.panel-meter > div { height: 100%; border-radius: inherit; background: #30d158; transition: width 0.6s var(--ease); }
+.panel-meter.mid > div { background: #ffd60a; }
+.panel-meter.high > div { background: #ff453a; }
+.panel-sessions { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+.panel-session { display: flex; gap: 14px; padding: 12px; border-radius: var(--radius); background: var(--surface); transition: background 0.15s; }
+.panel-session:hover { background: var(--surface-2); }
+.panel-thumb { width: 70px; aspect-ratio: 2 / 3; flex: none; border-radius: 8px; overflow: hidden; }
+.panel-thumb.wide { width: 128px; aspect-ratio: 16 / 9; align-self: flex-start; }
+.panel-session-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.panel-session-user { font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.panel-session-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.panel-progress { position: static; height: 4px; border-radius: 99px; margin: 4px 0 2px; }
+.panel-tag { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 99px; background: var(--surface-2); color: var(--muted); margin-left: 6px; }
+.panel .ok { color: #30d158; }
+.panel .warn { color: #ffd60a; }
+.panel-table-wrap { overflow-x: auto; }
+.panel-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.panel-table th { text-align: left; font-weight: 500; color: var(--faint); font-size: 12px; padding: 0 12px 8px 0; white-space: nowrap; }
+.panel-table td { padding: 9px 12px 9px 0; border-top: 1px solid var(--hairline); white-space: nowrap; }
+.panel-top { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 6px; }
+.panel-top-item { width: 110px; flex: none; display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
+.panel-top-item .panel-thumb { width: 110px; }
+.panel-top-score { display: flex; align-items: center; gap: 3px; font-weight: 700; }
+.panel-top-score svg { width: 13px; height: 13px; color: #ffd60a; }
+.panel-top-name { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.panel-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; margin-top: 22px; }
+.panel-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; font-size: 14px; }
+.panel-list li { padding: 8px 0; border-top: 1px solid var(--hairline); line-height: 1.45; }
+.panel-list li:first-child { border-top: 0; padding-top: 0; }
+.panel-list li.warn { color: #ffd60a; }
+.panel-list a { text-decoration: underline; text-decoration-color: var(--hairline); text-underline-offset: 3px; }
+.panel-stars { color: #ffd60a; letter-spacing: 1px; }

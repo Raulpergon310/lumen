@@ -26,10 +26,12 @@ export function socialSection(item, header, isStale) {
 }
 
 function paint(item, box, info, full) {
-  box.replaceChildren(
+  // replaceChildren would print a null as the text "null".
+  box.replaceChildren(...[
     ...info.recommendedToMe.map((r) => recommendedNote(r, box)),
     full ? ratingLine(item, box, info) : null,
-    info.watched.length ? watchedLine(item, info.watched) : null);
+    info.watched.length ? watchedLine(item, info.watched) : null,
+  ].filter(Boolean));
 }
 
 // "Tengo que verla" and "Recomendar", next to the other round buttons.

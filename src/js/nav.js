@@ -13,6 +13,7 @@ export function renderNav(nav) {
     h('div', { class: 'menu-head' },
       h('div', { class: 'menu-name' }, userName),
       h('div', { class: 'menu-sub' }, ctx.server?.name || '')),
+    ctx.user?.Policy?.IsAdministrator ? h('a', { class: 'menu-item', href: '#/panel', html: `${icons.chart}<span>Panel</span>` }) : null,
     h('a', { class: 'menu-item', href: '#/settings', html: `${icons.settings}<span>Ajustes</span>` }),
     h('button', { class: 'menu-item', html: `${icons.server}<span>Cambiar de servidor</span>`, onclick: () => ctx.showConnect({ serverId: ctx.server?.id }) }),
     h('button', { class: 'menu-item danger', html: `${icons.logout}<span>Cerrar sesión</span>`, onclick: () => ctx.signOut() }));

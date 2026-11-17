@@ -115,4 +115,5 @@ export const social = {
   dismiss: (recId) => call('DELETE', `/api/recommendations/${recId}`),
   users: () => call('GET', '/api/users'),
   inbox: () => call('GET', '/api/inbox'),
+  stats: () => call('GET', '/api/stats'),
 };

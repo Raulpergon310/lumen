@@ -10,6 +10,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const os = require('os');
 
 const VERSION = '1.0.0';
 const PORT = Number(process.env.PORT) || 8097;
@@ -76,7 +77,7 @@ function whoIs(token) {
       if (e.status === 401 || e.status === 403) throw e;
       throw Object.assign(new Error('Jellyfin no responde'), { status: 502 });
     });
-    return { id: u.Id, name: u.Name };
+    return { id: u.Id, name: u.Name, admin: !!u.Policy?.IsAdministrator };
   });
 }
 
@@ -162,6 +163,58 @@ async function itemInfo(me, itemId) {
   };
 }
 
+// ---------- control panel (admins only) ----------
+// The machine: with --network host the container sees the NAS's own load and memory; the disk is the
+// volume holding DATA_DIR (the NAS's data volume).
+function system() {
+  const out = { load: os.loadavg(), cpus: os.cpus().length, uptime: os.uptime(), memTotal: os.totalmem(), memAvailable: os.freemem() };
+  try {
+    const mi = fs.readFileSync('/proc/meminfo', 'utf8');
+    const kb = (k) => Number(mi.match(new RegExp(`^${k}:\s+(\d+)`, 'm'))?.[1]) * 1024;
+    if (kb('MemTotal')) out.memTotal = kb('MemTotal');
+    if (kb('MemAvailable')) out.memAvailable = kb('MemAvailable');
+  } catch {}
+  try {
+    const st = fs.statfsSync(DATA_DIR);
+    out.disk = { total: st.blocks * st.bsize, free: st.bavail * st.bsize };
+  } catch {}
+  return out;
+}
+
+async function stats() {
+  const list = await users().catch(() => []);
+  const nameOf = (id) => list.find((u) => u.id === id)?.name || 'Alguien';
+  const rated = Object.entries(db.ratings).map(([itemId, byUser]) => {
+    const scores = Object.values(byUser).map((r) => r.score);
+    return { itemId, count: scores.length, average: Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10 };
+  });
+  const recentRatings = Object.entries(db.ratings)
+    .flatMap(([itemId, byUser]) => Object.entries(byUser).map(([userId, r]) => ({ itemId, user: nameOf(userId), score: r.score, at: r.at })))
+    .sort((a, b) => b.at.localeCompare(a.at)).slice(0, 15);
+  const perUser = list.map((u) => ({
+    name: u.name,
+    ratings: Object.values(db.ratings).filter((r) => r[u.id]).length,
+    sent: db.recs.filter((r) => r.from === u.id).length,
+    received: db.recs.filter((r) => r.to === u.id).length,
+    watchlist: Object.keys(db.watchlist[u.id] || {}).length,
+  })).filter((u) => u.ratings || u.sent || u.received || u.watchlist);
+  return {
+    version: VERSION,
+    system: system(),
+    totals: {
+      ratings: rated.reduce((a, r) => a + r.count, 0),
+      rated: rated.length,
+      recommendations: db.recs.length,
+      watchlist: Object.values(db.watchlist).reduce((a, w) => a + Object.keys(w).length, 0),
+    },
+    topRated: rated.sort((a, b) => (b.average - a.average) || (b.count - a.count)).slice(0, 12),
+    recentRatings,
+    recentRecommendations: [...db.recs].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 15)
+      .map((r) => ({ itemId: r.itemId, from: nameOf(r.from), to: nameOf(r.to), note: r.note, at: r.at, dismissed: r.dismissed })),
+    perUser,
+  };
+}
+
 const routes = [
   ['GET', /^\/api\/users$/, async (me) => (await users()).map((u) => ({ ...u, me: u.id === me.id }))],
 
@@ -225,6 +278,11 @@ const routes = [
     r.dismissed = true;
     save();
     return { ok: true };
+  }],
+
+  ['GET', /^\/api\/stats$/, (me) => {
+    if (!me.admin) throw Object.assign(new Error('Solo para administradores'), { status: 403 });
+    return stats();
   }],
 
   // Home page: what friends recommended to me (newest first) and my own list.
