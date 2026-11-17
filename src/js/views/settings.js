@@ -53,6 +53,40 @@ function seasonSetting() {
   return h('div', { class: 'setting' }, h('span', { class: 'setting-text' }, h('span', null, 'Temporadas y episodios que faltan'), status), btn);
 }
 
+// Lumen social (social/server.js): ratings, recommendations and «Tengo que verla» shared with friends.
+function socialSetting() {
+  const status = h('span', { class: 'hint' }, 'Buscando el servicio…');
+  const input = h('input', { class: 'field', placeholder: 'http://192.168.1.50:8097 o https://jellyfin.midominio.com/lumen-social', spellcheck: 'false' });
+  const describe = (url) => (url
+    ? `Conectado a ${url}. Tus amigos ven tus notas y recomendaciones, y tú las suyas.`
+    : 'No encuentro el servicio. Sin él no hay notas ni recomendaciones entre amigos (se instala junto a Jellyfin: carpeta social del proyecto).');
+  import('../social.js').then(async (m) => {
+    const url = await m.socialUrl();
+    input.value = url || '';
+    status.textContent = describe(url);
+  });
+  const save = button('Guardar', {
+    onclick: async () => {
+      save.disabled = true;
+      status.textContent = 'Comprobando…';
+      try {
+        const m = await import('../social.js');
+        await m.setSocialUrl(input.value);
+        const url = await m.socialUrl();
+        status.textContent = describe(url);
+        if (url) toast('Servicio de amigos conectado');
+      } catch (e) {
+        status.textContent = `No responde: ${e.message}. Revisa la dirección, que el servicio esté encendido y, si usas la web, que sea https.`;
+      } finally {
+        save.disabled = false;
+      }
+    },
+  });
+  return h('div', { class: 'setting setting-stack' },
+    h('span', { class: 'setting-text' }, h('span', null, 'Dirección del servicio de amigos'), status),
+    h('div', { class: 'setting-row' }, input, save));
+}
+
 export function settingsView() {
   const servers = ctx.savedServers();
   const serverList = h('div', { class: 'setting-list' }, servers.map((s) => h('div', { class: 'setting' },
@@ -116,6 +150,9 @@ export function settingsView() {
     h('section', { class: 'settings-group' },
       h('h2', null, 'Temporadas nuevas'),
       seasonSetting()),
+    h('section', { class: 'settings-group' },
+      h('h2', null, 'Amigos'),
+      socialSetting()),
     h('section', { class: 'settings-group' },
       h('h2', null, 'Servidores'),
       serverList),

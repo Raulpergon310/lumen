@@ -26,10 +26,12 @@ export async function homeView({ isStale }) {
   // Recommendations load after the page is on screen, so they never slow down opening the app.
   const forYou = h('div', { class: 'rec-slot' });
   const discover = h('div', { class: 'rec-slot' });
+  const friends = h('div', { class: 'rec-slot' });
   // Lo de siempre arriba (seguir viendo, lo recién añadido); las recomendaciones y los «Porque viste…» al final.
   const rows = [
     row('Seguir viendo', resumeItems, { kind: 'thumb' }),
     row('A continuación', nextUpItems, { kind: 'thumb' }),
+    friends,
     ...libs.map((v, i) => row(`Novedades en ${v.Name}`, val(latest[i]), { href: `#/library/${v.Id}` })),
     discover,
     forYou,
@@ -37,6 +39,10 @@ export async function homeView({ isStale }) {
   // Temporadas y episodios que faltan: se comprueba en segundo plano y las series afectadas llevan un borde morado.
   import('../seasons.js').then((m) => m.newSeasons()).catch(() => {});
   loadRecommendations(libs, forYou, discover);
+  // Recomendaciones de los amigos y «Tengo que verla» (servicio social; si no hay, no sale nada).
+  import('../friends.js').then((m) => m.friendsRows(row))
+    .then((made) => { if (made.length) friends.replaceWith(...made); else friends.remove(); })
+    .catch(() => friends.remove());
 
   // Carousel: a couple of new arrivals plus unwatched titles at random from the whole library.
   const unwatched = (i) => i.BackdropImageTags?.length && i.Type !== 'Episode' && !i.UserData?.Played;

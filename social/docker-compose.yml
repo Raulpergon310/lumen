@@ -1,0 +1,15 @@
+# Junto a Jellyfin. Cambia JELLYFIN_URL y JELLYFIN_API_KEY y arranca con:  docker compose up -d --build
+services:
+  lumen-social:
+    build: .
+    container_name: lumen-social
+    restart: unless-stopped
+    ports:
+      - "8097:8097"
+    environment:
+      # Dirección de Jellyfin vista desde este contenedor (en el mismo NAS suele valer la IP local).
+      JELLYFIN_URL: "http://192.168.1.50:8096"
+      # Jellyfin → Panel de control → Claves API → «+». Nunca sale del servidor.
+      JELLYFIN_API_KEY: "pega-aqui-la-clave"
+    volumes:
+      - ./data:/data

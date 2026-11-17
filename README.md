@@ -30,6 +30,8 @@ invitación con la dirección ya puesta: `https://<usuario>.github.io/<repo>/?se
   Intro Skipper en el servidor), siguiente episodio, progreso sincronizado con Jellyfin.
 - Búsqueda de títulos, actores y directores; marcar temporadas enteras como vistas; recomendaciones que cambian.
 - En la tele se maneja con el mando: flechas, OK, Atrás y los botones multimedia.
+- Con amigos: puntuar con estrellas, recomendar a otro usuario, lista «Tengo que verla» y ver quién más la ha visto.
+  Necesita el pequeño servicio de la carpeta [`social`](social/README.md) instalado junto a Jellyfin.
 
 ### Atajos en el reproductor (Windows)
 

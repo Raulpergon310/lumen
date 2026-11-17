@@ -6,6 +6,7 @@ import { backdropSrc, logoSrc, thumbSrc, progressOf, techBadges } from '../media
 import { openImagePicker } from '../images.js';
 import { attachCardActions } from '../cardmenu.js';
 import { personCard } from './person.js';
+import { socialSection } from '../friends.js';
 import { newFor, missingFor, describeNew, hideNewSeason, fmtDate } from '../seasons.js';
 
 export async function itemView({ params: [id], query, isStale }) {
@@ -32,7 +33,7 @@ export async function itemView({ params: [id], query, isStale }) {
   page.append(header);
   renderHeader(header, item);
   if (item.Type === 'Series') missingNote(item, header);
-  if (['Movie', 'Series', 'Episode'].includes(item.Type)) watchedNote(item, header, isStale);
+  if (['Movie', 'Series', 'Episode'].includes(item.Type)) socialSection(item, header, isStale);
 
   if (item.Type === 'Series') {
     page.append(await seriesSection(item, query.season));
@@ -304,31 +305,6 @@ async function folderView(item, isStale) {
   return h('div', { class: 'page library' },
     h('div', { class: 'lib-head' }, h('h1', null, item.Name)),
     h('div', { class: 'grid' }, (r.Items || []).map(posterCard)));
-}
-
-// One line under the actions: which other users of the server have seen it or are watching it.
-// Loads after the page is on screen; shows nothing if nobody has, or the account isn't an admin.
-function watchedNote(item, header, isStale) {
-  const api = ctx.api;
-  if (ctx.user?.Policy && !ctx.user.Policy.IsAdministrator) return;
-  api.watchedBy(item.Id).then((users) => {
-    if (!users.length || isStale()) return;
-    const series = item.Type === 'Series';
-    const label = (u) => (u.played ? u.name : `${u.name} (${series ? 'a medias' : `${u.pct}%`})`);
-    const seen = users.filter((u) => u.played).map(label);
-    const watching = users.filter((u) => !u.played).map(label);
-    const list = (names) => (names.length > 1 ? `${names.slice(0, -1).join(', ')} y ${names.at(-1)}` : names[0]);
-    const parts = [];
-    const verb = (one, many, n) => (n > 1 ? many : one);
-    if (seen.length) parts.push(`${series ? verb('La ha terminado', 'La han terminado', seen.length) : verb('La ha visto', 'La han visto', seen.length)}: ${list(seen)}`);
-    if (watching.length) parts.push(`${verb('La está viendo', 'La están viendo', watching.length)}: ${list(watching)}`);
-    const avatars = users.slice(0, 5).map((u) => (u.imageTag
-      ? h('img', { class: 'watched-avatar', src: api.buildUrl(`/Users/${u.id}/Images/Primary`, { fillWidth: 48, quality: 90, tag: u.imageTag }), alt: '', title: u.name })
-      : h('span', { class: 'watched-avatar letter', title: u.name }, u.name[0]?.toUpperCase() || '?')));
-    header.querySelector('.actions')?.after(h('div', { class: 'watched-note' },
-      h('span', { class: 'watched-avatars' }, avatars),
-      h('span', null, parts.join('  ·  '))));
-  }).catch(() => {});
 }
 
 // Series page: one line under the title saying what has aired and isn't on the server.

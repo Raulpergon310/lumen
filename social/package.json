@@ -1,0 +1,10 @@
+{
+  "name": "lumen-social",
+  "version": "1.0.0",
+  "description": "Puntuaciones, recomendaciones y «tengo que verla» compartidas entre los usuarios de un servidor Jellyfin, para Lumen",
+  "main": "server.js",
+  "private": true,
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "scripts": { "start": "node server.js" }
+}

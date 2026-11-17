@@ -768,9 +768,46 @@ a.person:hover .person-img { transform: scale(1.05); box-shadow: 0 0 0 3px rgba(
 .id-choice.busy { opacity: 0.5; pointer-events: none; }
 @media (max-width: 720px) { .id-form { grid-template-columns: 1fr 80px; } .id-form .field:nth-child(3) { grid-column: 1 / -1; } }
 
-/* Quién más la ha visto */
-.watched-note { display: flex; align-items: center; gap: 10px; margin-top: 14px; font-size: 14px; color: var(--muted); }
+/* Amigos: notas, recomendaciones y quién la ha visto (friends.js) */
+.friends { display: flex; flex-direction: column; gap: 12px; margin-top: 18px; font-size: 14px; color: var(--muted); }
+.friends:empty { display: none; }
+.watched-note { display: flex; align-items: center; gap: 10px; }
 .watched-avatars { display: inline-flex; flex: none; }
 .watched-avatar { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; border: 2px solid rgba(0, 0, 0, 0.6); margin-left: -8px;
   display: inline-grid; place-items: center; font-size: 12px; font-weight: 600; background: rgba(255, 255, 255, 0.16); color: #fff; }
 .watched-avatar:first-child { margin-left: 0; }
+.friends-rating { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.friends-label { color: var(--faint); }
+.stars { display: inline-flex; gap: 2px; }
+.star { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; color: rgba(255, 255, 255, 0.28); transition: color 0.12s, transform 0.12s; }
+.star svg { width: 22px; height: 22px; }
+.star.on { color: #ffd60a; }
+.star:hover { transform: scale(1.12); }
+.friends-avg { display: inline-flex; align-items: center; gap: 4px; color: var(--text); font-weight: 600; }
+.friends-avg svg, .friends-score svg { width: 14px; height: 14px; color: #ffd60a; }
+.friends-avg .muted { font-weight: 400; }
+.friends-scores { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.friends-score { display: inline-flex; align-items: center; gap: 2px; padding: 3px 9px; border-radius: 99px; background: var(--surface); }
+.friends-score b { color: var(--text); }
+.friends-rec { display: inline-flex; align-items: center; gap: 10px; align-self: flex-start; padding: 8px 8px 8px 12px; border-radius: 12px;
+  background: rgba(10, 132, 255, 0.14); border: 1px solid rgba(10, 132, 255, 0.45); color: var(--text); }
+.friends-rec-icon svg { width: 16px; height: 16px; display: block; color: #64b5ff; }
+.friends-quote { color: var(--muted); margin-left: 6px; font-style: italic; }
+.icon-btn.small { width: 30px; height: 30px; }
+.icon-btn.small svg { width: 16px; height: 16px; }
+.friend-list { display: flex; flex-direction: column; gap: 6px; }
+.friend { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 12px; background: var(--surface); text-align: left; transition: background 0.15s; }
+.friend:hover { background: var(--surface-2); }
+.friend .watched-avatar { width: 34px; height: 34px; margin: 0; border: 0; font-size: 14px; }
+.friend > span:nth-child(2) { flex: 1; }
+.friend-check { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; border: 2px solid var(--hairline); color: transparent; }
+.friend-check svg { width: 14px; height: 14px; }
+.friend.on { background: var(--surface-2); }
+.friend.on .friend-check { background: #fff; border-color: #fff; color: #000; }
+.friend-note { resize: vertical; min-height: 60px; font: inherit; }
+.setting-stack { flex-direction: column; align-items: stretch; gap: 12px; }
+.setting-row { display: flex; gap: 10px; }
+.setting-row .field { flex: 1; min-width: 0; }
+.tv .star, .tv .friend { transition: background 0.15s ease-out, color 0.15s ease-out, transform 0.18s ease-out; }
+.tv .star:focus { transform: scale(1.25); color: #ffd60a; box-shadow: 0 0 0 2px #fff; }
+.tv .friend:focus { background: #fff; color: #000; }

@@ -180,6 +180,8 @@ async function start() {
   onRoute();
   // Android TV: VLC may have answered while the app was being reloaded; report where it stopped.
   if (IS_TV) finishVlcSession();
+  // Friends' recommendations that arrived while the app was closed.
+  setTimeout(() => import('./friends.js').then((m) => m.notifyRecommendations()).catch(() => {}), 2500);
 }
 
 // ---------- router ----------
