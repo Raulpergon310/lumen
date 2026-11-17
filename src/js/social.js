@@ -12,8 +12,10 @@ function timeoutSignal(ms) {
   setTimeout(() => c.abort(), ms);
   return c.signal;
 }
-let found = null; // { api, url } | { api, url: null }
+let found = null; // { api, url, at }; a null url is only trusted for a few seconds (the service may be starting)
 let finding = null;
+const RETRY_MS = 3000;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Where to look: the addresses saved for this server (the one at home and, learnt from the service
 // itself, the one from outside), one from an invitation link (?social=…), and the Jellyfin machine
@@ -45,12 +47,16 @@ export async function ping(url, timeout = 4000) {
   return j;
 }
 
+// Is there anywhere to look at all? When not, the service isn't set up and nothing social shows.
+export const configured = () => !!ctx.api && candidates().length > 0;
+
 // The service's address for the current server, or null. All known addresses are tried at once and
-// the first that answers wins (home or away). Looked up once per session.
+// the first that answers wins (home or away). Found once per session; "nobody answered" is asked
+// again after a few seconds, because the service takes a while to start on the NAS.
 export function socialUrl() {
   const api = ctx.api;
   if (!api) return Promise.resolve(null);
-  if (found?.api === api) return Promise.resolve(found.url);
+  if (found?.api === api && (found.url || Date.now() - found.at < RETRY_MS)) return Promise.resolve(found.url);
   if (finding?.api === api) return finding.p;
   const list = candidates();
   const p = new Promise((resolve) => {
@@ -62,9 +68,27 @@ export function socialUrl() {
         resolve(url);
       }, () => { if (--pending === 0) resolve(null); });
     }
-  }).then((url) => { found = { api, url }; return url; });
+  }).then((url) => {
+    found = { api, url, at: Date.now() };
+    if (finding?.p === p) finding = null;
+    return url;
+  });
   finding = { api, p };
   return p;
+}
+
+// Waits for the service while it is starting: tries again every few seconds. onWaiting is called
+// once, the first time it doesn't answer, so the page can say it's starting instead of "unavailable".
+export async function waitForSocial({ onWaiting, isStale = () => false, maxMs = 180000 } = {}) {
+  const start = Date.now();
+  let told = false;
+  for (;;) {
+    const url = await socialUrl();
+    if (url) return url;
+    if (!configured() || isStale() || Date.now() - start > maxMs) return null;
+    if (!told) { told = true; onWaiting?.(); }
+    await sleep(RETRY_MS);
+  }
 }
 
 function remember(...urls) {
@@ -90,7 +114,7 @@ export async function setSocialUrl(url) {
 }
 
 async function call(method, path, body) {
-  const url = await socialUrl();
+  const url = await waitForSocial({ maxMs: 90000 });
   if (!url) throw Object.assign(new Error('Sin servicio social'), { offline: true });
   let r;
   try {
@@ -111,7 +135,9 @@ async function call(method, path, body) {
 
 export const social = {
   available: () => socialUrl().then(Boolean),
-  item: (id) => call('GET', `/api/items/${id}`),
+  // Ratings and the rest, without "who has seen it" (slow: it asks Jellyfin about every user).
+  item: (id) => call('GET', `/api/items/${id}?watched=0`),
+  watched: (id) => call('GET', `/api/items/${id}/watched`),
   rate: (id, score) => call('PUT', `/api/items/${id}/rating`, { score }),
   watchlist: (id, on) => call(on ? 'PUT' : 'DELETE', `/api/watchlist/${id}`),
   recommend: (id, to, note) => call('POST', `/api/items/${id}/recommend`, { to, note }),

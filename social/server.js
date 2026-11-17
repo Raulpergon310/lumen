@@ -12,7 +12,7 @@ const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const PORT = Number(process.env.PORT) || 8097;
 const JELLYFIN_URL = String(process.env.JELLYFIN_URL || 'http://localhost:8096').replace(/\/+$/, '');
 const API_KEY = process.env.JELLYFIN_API_KEY || '';
@@ -150,8 +150,8 @@ function ratingsOf(itemId) {
   return Object.entries(db.ratings[itemId] || {}).map(([userId, r]) => ({ userId, score: r.score, at: r.at }));
 }
 
-async function itemInfo(me, itemId) {
-  const [list, seen] = await Promise.all([users().catch(() => []), watched(itemId).catch(() => [])]);
+async function itemInfo(me, itemId, withWatched = true) {
+  const [list, seen] = await Promise.all([users().catch(() => []), withWatched ? watched(itemId).catch(() => []) : null]);
   const nameOf = (id) => list.find((u) => u.id === id)?.name || 'Alguien';
   const ratings = ratingsOf(itemId).map((r) => ({ ...r, name: nameOf(r.userId), me: r.userId === me.id }));
   const scores = ratings.map((r) => r.score);
@@ -159,7 +159,7 @@ async function itemInfo(me, itemId) {
     ratings: ratings.sort((a, b) => b.at.localeCompare(a.at)),
     average: scores.length ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10 : null,
     mine: db.ratings[itemId]?.[me.id]?.score ?? null,
-    watched: seen.filter((u) => u.id !== me.id),
+    watched: seen ? seen.filter((u) => u.id !== me.id) : undefined,
     onWatchlist: !!db.watchlist[me.id]?.[itemId],
     recommendedToMe: db.recs.filter((r) => r.itemId === itemId && r.to === me.id && !r.dismissed)
       .map((r) => ({ id: r.id, from: { id: r.from, name: nameOf(r.from) }, note: r.note, at: r.at })),
@@ -221,7 +221,9 @@ async function stats() {
 const routes = [
   ['GET', /^\/api\/users$/, async (me) => (await users()).map((u) => ({ ...u, me: u.id === me.id }))],
 
-  ['GET', /^\/api\/items\/([^/]+)$/, (me, [itemId]) => itemInfo(me, itemId)],
+  // ?watched=0 answers at once; who has seen it comes apart from /watched (it asks Jellyfin about every user).
+  ['GET', /^\/api\/items\/([^/]+)$/, (me, [itemId], _b, url) => itemInfo(me, itemId, url.searchParams.get('watched') !== '0')],
+  ['GET', /^\/api\/items\/([^/]+)\/watched$/, async (me, [itemId]) => (await watched(itemId)).filter((u) => u.id !== me.id)],
 
   // Ratings and watched for many items at once (cards): { itemId: { average, count, mine } }.
   ['GET', /^\/api\/ratings$/, (me, _m, _b, url) => {

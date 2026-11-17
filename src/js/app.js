@@ -182,6 +182,8 @@ async function start() {
   onRoute();
   // Android TV: VLC may have answered while the app was being reloaded; report where it stopped.
   if (IS_TV) finishVlcSession();
+  // Look for the friends service now, so the stars are ready by the time a title is opened.
+  import('./social.js').then((m) => m.socialUrl()).catch(() => {});
   // Friends' recommendations that arrived while the app was closed.
   setTimeout(() => import('./friends.js').then((m) => m.notifyRecommendations()).catch(() => {}), 2500);
 }

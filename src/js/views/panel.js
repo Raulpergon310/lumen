@@ -3,7 +3,8 @@
 // and the server's recent activity. Nothing here changes anything.
 import { h, episodeLabel, image } from '../ui.js';
 import { ctx } from '../context.js';
-import { social } from '../social.js';
+import { social, configured, waitForSocial } from '../social.js';
+import { watchedSection } from './panel-watched.js';
 import { posterSrc, thumbSrc } from '../media.js';
 import { icons } from '../icons.js';
 
@@ -20,39 +21,80 @@ export async function panelView({ isStale }) {
   const library = h('div', { class: 'panel-tiles' });
   const usersBox = h('div', { class: 'panel-card' });
   const friends = h('div', { class: 'panel-friends' });
+  const watchedBox = h('div');
   const activity = h('div', { class: 'panel-card' });
 
   const page = h('div', { class: 'page panel' },
     h('h1', null, 'Panel'),
     section('Ahora mismo', live),
+    section('Lo que se ha visto', watchedBox),
     section('NAS', nas),
     section('Biblioteca', library),
     section('Usuarios', usersBox),
     section('Amigos', friends),
     section('Actividad reciente', activity));
 
+  // The friends service (NAS figures, ratings) may still be starting: say so and keep waiting.
+  const waiting = (text) => h('p', { class: 'friends-status' }, h('span', { class: 'mini-spinner' }), text);
+  if (configured()) {
+    nas.replaceChildren(waiting('Conectando con el servicio de amigos…'));
+    friends.replaceChildren(waiting('Conectando con el servicio de amigos…'));
+  } else {
+    const off = 'El servicio de amigos no está configurado (Ajustes → Amigos).';
+    nas.replaceChildren(h('p', { class: 'muted' }, off));
+    friends.replaceChildren(h('p', { class: 'muted' }, off));
+  }
+
   // Live part: sessions every 5 s, the NAS figures every 15 s (only while the page is visible).
   let stats = null;
   let userList = null; // painted again when the friends figures arrive
+  let socialReady = false;
   let ticks = 0;
+  const loadStats = () => social.stats().then((st) => {
+    if (isStale()) return;
+    const first = !stats;
+    stats = st;
+    paintNas(nas, stats);
+    if (first) {
+      if (userList) paintUsers(usersBox, userList, stats);
+      paintFriends(friends, stats).catch((e) => friends.replaceChildren(h('p', { class: 'muted' }, e.message)));
+    }
+  }).catch((e) => {
+    if (isStale() || stats) return;
+    paintNas(nas, null, e);
+    friends.replaceChildren(h('p', { class: 'muted' }, e.message));
+  });
   const refresh = async () => {
     if (document.hidden) return;
-    const [sessions, st] = await Promise.allSettled([
-      api.req('/Sessions', { fresh: true, quiet: true, query: { ActiveWithinSeconds: 960 } }),
-      ticks++ % 3 === 0 ? social.stats() : Promise.resolve(stats),
-    ]);
+    if (socialReady && ticks++ % 3 === 0) loadStats();
+    const sessions = await api.req('/Sessions', { fresh: true, quiet: true, query: { ActiveWithinSeconds: 960 } }).catch(() => null);
     if (isStale()) return;
-    paintLive(live, sessions.status === 'fulfilled' ? sessions.value : null);
-    if (st.status === 'fulfilled' && st.value) {
-      const first = !stats;
-      stats = st.value;
-      paintNas(nas, stats);
-      if (first && userList) paintUsers(usersBox, userList, stats);
-    }
-    else if (!stats) paintNas(nas, null, st.reason);
+    paintLive(live, sessions);
   };
   const timer = setInterval(refresh, LIVE_MS);
   await refresh();
+
+  if (configured()) {
+    waitForSocial({
+      isStale, maxMs: 15 * 60 * 1000,
+      onWaiting: () => {
+        if (isStale()) return;
+        nas.replaceChildren(waiting('Arrancando el servicio de amigos… en cuanto conteste aparecen aquí la carga del NAS y las notas.'));
+        friends.replaceChildren(waiting('Arrancando el servicio de amigos…'));
+      },
+    }).then((url) => {
+      if (isStale()) return;
+      if (!url) {
+        const msg = 'El servicio de amigos no ha contestado en 15 minutos. Comprueba que está encendido en el NAS.';
+        nas.replaceChildren(h('p', { class: 'muted' }, msg));
+        friends.replaceChildren(h('p', { class: 'muted' }, msg));
+        return;
+      }
+      socialReady = true;
+      ticks = 1;
+      loadStats();
+    });
+  }
 
   // The rest once.
   Promise.allSettled([
@@ -67,13 +109,10 @@ export async function panelView({ isStale }) {
     userList = val(users);
     paintUsers(usersBox, userList, stats);
     paintActivity(activity, val(log));
-  });
-  // Friends needs item names: after stats has arrived.
-  (stats ? Promise.resolve(stats) : social.stats()).then((s) => paintFriends(friends, s)).catch((e) => {
-    friends.replaceChildren(h('p', { class: 'muted' }, e.offline ? 'El servicio de amigos no está disponible.' : e.message));
+    watchedBox.replaceChildren(userList ? watchedSection(userList) : h('p', { class: 'muted' }, 'No se pudo leer la lista de usuarios.'));
   });
 
-  return { node: page, cleanup: () => clearInterval(timer) };
+  return { node: page, cleanup: () => { clearInterval(timer); document.querySelector('.wv-tip')?.remove(); } };
 }
 
 function section(title, body) {
@@ -137,7 +176,7 @@ function fmtClock(ticks) {
 // ---------- NAS ----------
 function paintNas(box, stats, err) {
   if (!stats) {
-    box.replaceChildren(h('p', { class: 'muted' }, err?.offline ? 'Para ver la carga del NAS hace falta el servicio de amigos.' : `No se pudo leer: ${err?.message || ''}`));
+    box.replaceChildren(h('p', { class: 'muted' }, err?.offline ? 'El servicio de amigos todavía no contesta.' : `No se pudo leer: ${err?.message || ''}`));
     return;
   }
   const s = stats.system;

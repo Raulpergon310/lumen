@@ -5,33 +5,69 @@
 import { h, button, toast, spinner } from './ui.js';
 import { icons } from './icons.js';
 import { ctx } from './context.js';
-import { social } from './social.js';
+import { social, configured, waitForSocial } from './social.js';
 
 export function socialSection(item, header, isStale) {
   const full = item.Type === 'Movie' || item.Type === 'Series';
-  social.item(item.Id).then((info) => {
+  if (!configured()) return adminFallback(item, header, isStale);
+
+  // The stars show straight away (greyed) so the page doesn't jump when the service answers.
+  const box = h('div', { class: 'friends' });
+  const state = { info: null, watched: null, waiting: false };
+  const repaint = () => paint(item, box, state, full);
+  header.querySelector('.actions')?.after(box);
+  repaint();
+
+  waitForSocial({ isStale, onWaiting: () => { state.waiting = true; if (!isStale()) repaint(); } }).then((url) => {
     if (isStale()) return;
-    const box = h('div', { class: 'friends' });
-    header.querySelector('.actions')?.after(box);
-    if (full) addButtons(item, header, info);
-    paint(item, box, info, full);
-  }).catch((e) => {
-    if (!e.offline) return;
-    // No service: the old way, for admins only.
-    if (ctx.user?.Policy && !ctx.user.Policy.IsAdministrator) return;
-    ctx.api.watchedBy(item.Id).then((users) => {
-      if (users.length && !isStale()) header.querySelector('.actions')?.after(h('div', { class: 'friends' }, watchedLine(item, users)));
-    }).catch(() => {});
+    if (!url) { box.remove(); return adminFallback(item, header, isStale); }
+    state.waiting = false;
+    // Ratings answer at once; "who has seen it" asks Jellyfin about every user, so it comes apart.
+    social.item(item.Id).then((info) => {
+      if (isStale()) return;
+      state.info = info;
+      if (Array.isArray(info.watched) && !state.watched) state.watched = info.watched;
+      if (full) addButtons(item, header, info);
+      repaint();
+    }).catch((e) => {
+      if (isStale()) return;
+      state.error = e.message;
+      repaint();
+    });
+    social.watched(item.Id).then((list) => {
+      if (isStale()) return;
+      state.watched = list;
+      repaint();
+    }).catch(() => {}); // an older service has no /watched: it came with the ratings
   });
 }
 
-function paint(item, box, info, full) {
+// No service: the old way, for admins only.
+function adminFallback(item, header, isStale) {
+  if (ctx.user?.Policy && !ctx.user.Policy.IsAdministrator) return;
+  ctx.api.watchedBy(item.Id).then((users) => {
+    if (users.length && !isStale()) header.querySelector('.actions')?.after(h('div', { class: 'friends' }, watchedLine(item, users)));
+  }).catch(() => {});
+}
+
+function paint(item, box, state, full) {
+  const { info, watched } = state;
+  let status = null;
+  if (state.error) status = h('div', { class: 'friends-status' }, state.error);
+  else if (!info && state.waiting) status = h('div', { class: 'friends-status' }, h('span', { class: 'mini-spinner' }), 'Arrancando el servicio de amigos…');
   // replaceChildren would print a null as the text "null".
   box.replaceChildren(...[
-    ...info.recommendedToMe.map((r) => recommendedNote(r, box)),
-    full ? ratingLine(item, box, info) : null,
-    info.watched.length ? watchedLine(item, info.watched) : null,
+    ...(info?.recommendedToMe || []).map((r) => recommendedNote(r, box)),
+    full ? (info ? ratingLine(item, box, state) : pendingStars()) : null,
+    status,
+    watched?.length ? watchedLine(item, watched) : null,
   ].filter(Boolean));
+}
+
+function pendingStars() {
+  return h('div', { class: 'friends-rating pending', 'aria-busy': 'true' },
+    h('span', { class: 'friends-label' }, 'Puntúala'),
+    h('span', { class: 'stars' }, [1, 2, 3, 4, 5].map(() => h('span', { class: 'star' }, h('span', { class: 'star-shape' })))));
 }
 
 // "Tengo que verla" and "Recomendar", next to the other round buttons.
@@ -79,27 +115,37 @@ function recommendedNote(rec, box) {
   return note;
 }
 
-function ratingLine(item, box, info) {
+function ratingLine(item, box, state) {
+  const info = state.info;
   const others = info.ratings.filter((r) => !r.me);
   const stars = h('span', { class: 'stars', role: 'radiogroup', 'aria-label': 'Tu puntuación' });
   let mine = info.mine;
-  const paintStars = (n) => [...stars.children].forEach((s, i) => s.classList.toggle('on', i < n));
+  // While the pointer is over them, the stars up to it turn to polished metal.
+  const paintStars = (n, hot = false) => [...stars.children].forEach((s, i) => {
+    s.classList.toggle('on', i < n);
+    s.classList.toggle('hot', hot && i < n);
+  });
   for (let n = 1; n <= 5; n++) {
     stars.append(h('button', {
-      class: 'star', title: `${n} estrella${n > 1 ? 's' : ''}${n === mine ? ' (pulsa otra vez para quitarla)' : ''}`, html: icons.star,
-      onmouseenter: () => paintStars(n),
+      class: 'star', title: `${n} estrella${n > 1 ? 's' : ''}${n === mine ? ' (pulsa otra vez para quitarla)' : ''}`,
+      style: `--i:${n - 1}`,
+      onmouseenter: () => paintStars(n, true),
+      onfocus: () => paintStars(n, true),
+      onblur: () => paintStars(mine || 0),
       onmouseleave: () => paintStars(mine || 0),
       onclick: async () => {
         const next = n === mine ? null : n;
         try {
           const fresh = await social.rate(item.Id, next);
           toast(next ? `Le has puesto ${next} estrella${next > 1 ? 's' : ''}` : 'Puntuación quitada');
-          paint(item, box, fresh, true);
+          state.info = fresh;
+          if (Array.isArray(fresh.watched)) state.watched = fresh.watched;
+          paint(item, box, state, true);
         } catch (e) {
           toast(e.message, 'error');
         }
       },
-    }));
+    }, h('span', { class: 'star-shape' })));
   }
   paintStars(mine || 0);
 
