@@ -36,14 +36,8 @@ export async function panelView({ isStale }) {
 
   // The friends service (NAS figures, ratings) may still be starting: say so and keep waiting.
   const waiting = (text) => h('p', { class: 'friends-status' }, h('span', { class: 'mini-spinner' }), text);
-  if (configured()) {
-    nas.replaceChildren(waiting('Conectando con el servicio de amigos…'));
-    friends.replaceChildren(waiting('Conectando con el servicio de amigos…'));
-  } else {
-    const off = 'El servicio de amigos no está configurado (Ajustes → Amigos).';
-    nas.replaceChildren(h('p', { class: 'muted' }, off));
-    friends.replaceChildren(h('p', { class: 'muted' }, off));
-  }
+  nas.replaceChildren(waiting('Conectando con el servicio de amigos…'));
+  friends.replaceChildren(waiting('Conectando con el servicio de amigos…'));
 
   // Live part: sessions every 5 s, the NAS figures every 15 s (only while the page is visible).
   let stats = null;
@@ -74,27 +68,27 @@ export async function panelView({ isStale }) {
   const timer = setInterval(refresh, LIVE_MS);
   await refresh();
 
-  if (configured()) {
-    waitForSocial({
-      isStale, maxMs: 15 * 60 * 1000,
-      onWaiting: () => {
-        if (isStale()) return;
-        nas.replaceChildren(waiting('Arrancando el servicio de amigos… en cuanto conteste aparecen aquí la carga del NAS y las notas.'));
-        friends.replaceChildren(waiting('Arrancando el servicio de amigos…'));
-      },
-    }).then((url) => {
+  waitForSocial({
+    isStale, maxMs: 15 * 60 * 1000,
+    onWaiting: () => {
       if (isStale()) return;
-      if (!url) {
-        const msg = 'El servicio de amigos no ha contestado en 15 minutos. Comprueba que está encendido en el NAS.';
-        nas.replaceChildren(h('p', { class: 'muted' }, msg));
-        friends.replaceChildren(h('p', { class: 'muted' }, msg));
-        return;
-      }
-      socialReady = true;
-      ticks = 1;
-      loadStats();
-    });
-  }
+      nas.replaceChildren(waiting('Arrancando el servicio de amigos… en cuanto conteste aparecen aquí la carga del NAS y las notas.'));
+      friends.replaceChildren(waiting('Arrancando el servicio de amigos…'));
+    },
+  }).then((url) => {
+    if (isStale()) return;
+    if (!url) {
+      const msg = configured()
+        ? 'El servicio de amigos no ha contestado en 15 minutos. Comprueba que está encendido en el NAS.'
+        : 'No se encuentra el servicio de amigos. Pon su dirección en Ajustes → Amigos.';
+      nas.replaceChildren(h('p', { class: 'muted' }, msg));
+      friends.replaceChildren(h('p', { class: 'muted' }, msg));
+      return;
+    }
+    socialReady = true;
+    ticks = 1;
+    loadStats();
+  });
 
   // The rest once.
   Promise.allSettled([

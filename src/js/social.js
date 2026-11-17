@@ -17,18 +17,33 @@ let finding = null;
 const RETRY_MS = 3000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Where to look: the addresses saved for this server (the one at home and, learnt from the service
-// itself, the one from outside), one from an invitation link (?social=…), and the Jellyfin machine
-// itself on the default port. An https page can't talk to a plain http service, so those are skipped.
+// Addresses we know the service has answered on (or was given): saved for this server, learnt from
+// the service itself, or from an invitation link (?social=…).
+function known() {
+  const server = ctx.savedServers?.().find((s) => s.id === ctx.server?.id);
+  return usable([...(server?.socialUrls || []), server?.socialUrl, new URLSearchParams(location.search).get('social')]);
+}
+
+// Where to look: the known addresses plus guesses next to Jellyfin: the default port at home (http),
+// and from outside (https) the next port up (Jellyfin on :8443 → service on :8444) or the
+// /lumen-social path of the same proxy. An https page can't talk to a plain http service.
 function candidates() {
   const server = ctx.savedServers?.().find((s) => s.id === ctx.server?.id);
-  const list = [...(server?.socialUrls || []), server?.socialUrl, new URLSearchParams(location.search).get('social')];
+  const list = [...known()];
   try {
     for (const url of [ctx.api.url, ...(server?.urls || [])]) {
       const u = new URL(url);
       if (u.protocol === 'http:') list.push(`http://${u.hostname}:${PORT}`);
+      else {
+        if (u.port) list.push(`https://${u.hostname}:${Number(u.port) + 1}`);
+        list.push(`${u.origin}/lumen-social`);
+      }
     }
   } catch {}
+  return usable(list);
+}
+
+function usable(list) {
   const httpsPage = location.protocol === 'https:';
   return [...new Set(list.filter(Boolean).map(normalize))].filter((u) => !httpsPage || u.startsWith('https:'));
 }
@@ -47,8 +62,9 @@ export async function ping(url, timeout = 4000) {
   return j;
 }
 
-// Is there anywhere to look at all? When not, the service isn't set up and nothing social shows.
-export const configured = () => !!ctx.api && candidates().length > 0;
+// Has the service ever answered for this server (or been given by hand)? Then, when it doesn't answer,
+// it is most likely starting, and it's worth waiting for. Otherwise it's looked for once, quietly.
+export const configured = () => !!ctx.api && known().length > 0;
 
 // The service's address for the current server, or null. All known addresses are tried at once and
 // the first that answers wins (home or away). Found once per session; "nobody answered" is asked

@@ -9,19 +9,21 @@ import { social, configured, waitForSocial } from './social.js';
 
 export function socialSection(item, header, isStale) {
   const full = item.Type === 'Movie' || item.Type === 'Series';
-  if (!configured()) return adminFallback(item, header, isStale);
-
-  // The stars show straight away (greyed) so the page doesn't jump when the service answers.
+  // The stars show straight away (greyed) so the page doesn't jump when the service answers. When it
+  // has never answered for this server, nothing shows until it does (it may not be installed).
   const box = h('div', { class: 'friends' });
   const state = { info: null, watched: null, waiting: false };
-  const repaint = () => paint(item, box, state, full);
-  header.querySelector('.actions')?.after(box);
-  repaint();
+  const repaint = () => {
+    if (!box.isConnected) header.querySelector('.actions')?.after(box);
+    paint(item, box, state, full);
+  };
+  if (configured()) repaint();
 
   waitForSocial({ isStale, onWaiting: () => { state.waiting = true; if (!isStale()) repaint(); } }).then((url) => {
     if (isStale()) return;
     if (!url) { box.remove(); return adminFallback(item, header, isStale); }
     state.waiting = false;
+    repaint();
     // Ratings answer at once; "who has seen it" asks Jellyfin about every user, so it comes apart.
     social.item(item.Id).then((info) => {
       if (isStale()) return;
@@ -237,40 +239,49 @@ export async function openRecommend(item) {
   }
 }
 
-// Inicio: "Te recomiendan tus amigos" and "Tengo que verla". Titles you've already watched drop off
-// both lists by themselves (and are cleared on the service).
-export async function friendsRows(row) {
+// What's waiting to be watched: friends' recommendations (grouped by title) and "tengo que verla".
+// Titles you've already watched drop off both lists by themselves (and are cleared on the service).
+export async function loadPending() {
   const inbox = await social.inbox();
   const ids = [...new Set([...inbox.recommendations.map((r) => r.itemId), ...inbox.watchlist.map((w) => w.itemId)])];
-  if (!ids.length) return [];
+  if (!ids.length) return { recs: [], list: [] };
   const r = await ctx.api.items({ Ids: ids.join(','), Recursive: true });
   const byId = new Map((r.Items || []).map((i) => [i.Id.replace(/-/g, '').toLowerCase(), i]));
   const played = (id) => byId.get(id)?.UserData?.Played;
 
   const recs = [];
-  const fromOf = new Map();
+  const recOf = new Map();
   for (const rec of inbox.recommendations) {
     if (played(rec.itemId)) { social.dismiss(rec.id).catch(() => {}); continue; }
     const it = byId.get(rec.itemId);
     if (!it) continue;
-    if (!fromOf.has(it.Id)) { fromOf.set(it.Id, []); recs.push(it); }
-    fromOf.get(it.Id).push(rec.from.name);
+    if (!recOf.has(it.Id)) { const entry = { item: it, from: [], notes: [], ids: [], at: rec.at }; recOf.set(it.Id, entry); recs.push(entry); }
+    const e = recOf.get(it.Id);
+    e.from.push(rec.from.name);
+    if (rec.note) e.notes.push({ from: rec.from.name, note: rec.note });
+    e.ids.push(rec.id);
   }
   const list = [];
   for (const w of inbox.watchlist) {
     if (played(w.itemId)) { social.watchlist(w.itemId, false).catch(() => {}); continue; }
     const it = byId.get(w.itemId);
-    if (it) list.push(it);
+    if (it) list.push({ item: it, at: w.at });
   }
+  return { recs, list };
+}
 
-  const recRow = row('Te recomiendan tus amigos', recs);
+export const fromLabel = (names) => `De ${names.length > 2 ? `${names[0]} y ${names.length - 1} más` : names.join(' y ')}`;
+
+// Inicio: "Te recomiendan tus amigos" and "Tengo que verla".
+export async function friendsRows(row) {
+  const { recs, list } = await loadPending();
+  const recRow = row('Te recomiendan tus amigos', recs.map((r) => r.item), { href: '#/pending' });
   // Under each poster, who recommended it instead of the year.
   recRow?.querySelectorAll('.row-track > .card').forEach((card, i) => {
-    const names = fromOf.get(recs[i].Id);
     const sub = card.querySelector('.card-sub') || card.appendChild(h('div', { class: 'card-sub' }));
-    sub.textContent = `De ${names.length > 2 ? `${names[0]} y ${names.length - 1} más` : names.join(' y ')}`;
+    sub.textContent = fromLabel(recs[i].from);
   });
-  return [recRow, row('Tengo que verla', list)].filter(Boolean);
+  return [recRow, row('Tengo que verla', list.map((w) => w.item), { href: '#/pending' })].filter(Boolean);
 }
 
 // On opening the app: one notice for recommendations that arrived since last time.

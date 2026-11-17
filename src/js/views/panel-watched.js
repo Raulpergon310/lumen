@@ -5,9 +5,11 @@ import { h, image } from '../ui.js';
 import { ctx } from '../context.js';
 import { posterSrc } from '../media.js';
 
-// One colour per user, in a fixed order (by name), the same in every chart. Past eight, "Otros".
-const COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#0ca30c', '#9085e9', '#e66767'];
+// One colour per user, in a fixed order (by name), the same in every chart: violets, pinks and blues,
+// chosen so they still tell apart with colour blindness. Past five, "Otros" (grey) in the monthly chart.
+const COLORS = ['#8b5cf6', '#d9468f', '#4a86e8', '#d06aa0', '#7067f0'];
 const OTHER = '#8e8e93';
+const ACCENT = '#8b5cf6';
 const MONTHS = 12;
 const PAGE = 36;
 
@@ -25,7 +27,7 @@ async function load(users) {
   const ask = (u, type) => api.reqAlt(['/Items', `/Users/${u.Id}/Items`], {
     background: true, timeout: 30000,
     query: {
-      userId: u.Id, Recursive: true, IncludeItemTypes: type, Filters: 'IsPlayed', Fields: 'UserData',
+      userId: u.Id, Recursive: true, IncludeItemTypes: type, Filters: 'IsPlayed', Fields: 'UserData,Genres',
       SortBy: 'DatePlayed', SortOrder: 'Descending', EnableImageTypes: 'Primary', ImageTypeLimit: 1, EnableTotalRecordCount: false,
     },
   }).then((r) => r.Items || []).catch(() => []);
@@ -49,9 +51,11 @@ function mount(box, people) {
     }
     box.replaceChildren(
       toolbar(active),
+      kpis(data, active),
       h('div', { class: 'wv-charts' },
         h('div', { class: 'panel-card' }, h('h3', null, state.kind === 'movies' ? 'Películas vistas por usuario' : 'Series por usuario'), byUser(active)),
-        h('div', { class: 'panel-card' }, h('h3', null, state.kind === 'movies' ? 'Películas vistas, mes a mes' : 'Episodios vistos, mes a mes'), byMonth(data, active))),
+        h('div', { class: 'panel-card' }, h('h3', null, state.kind === 'movies' ? 'Películas vistas, mes a mes' : 'Episodios vistos, mes a mes'), byMonth(data, active)),
+        h('div', { class: 'panel-card' }, h('h3', null, 'Géneros más vistos'), genres(data))),
       titles(data));
   };
 
@@ -75,7 +79,7 @@ function mount(box, people) {
         class: `wv-bar-row ${state.user && state.user !== p.id ? 'dim' : ''}`,
         onclick: () => { state.user = state.user === p.id ? null : p.id; state.shown = PAGE; render(); },
       },
-      h('span', { class: 'wv-bar-name' }, p.name),
+      h('span', { class: 'wv-bar-name' }, avatar(p), p.name),
       h('span', { class: 'wv-bar-track' }, h('span', { class: 'wv-bar', style: { width: `${(p.count / max) * 100}%`, background: p.color } })),
       h('span', { class: 'wv-bar-value' }, p.count.toLocaleString('es-ES')));
       tip.on(row, () => [h('b', null, p.name), h('div', null, `${p.count.toLocaleString('es-ES')} ${p.count === 1 ? unit[0] : unit[1]}`),
@@ -87,8 +91,15 @@ function mount(box, people) {
 
   // Stacked columns, the last twelve months, one colour per user.
   function byMonth(data, active) {
-    const shownPeople = active.filter((p) => !state.user || p.id === state.user);
+    // Everyone past the fifth colour shares one grey "Otros" series.
+    const chosen = active.filter((p) => !state.user || p.id === state.user);
+    const others = chosen.filter((p) => p.color === OTHER);
+    const shownPeople = chosen.filter((p) => p.color !== OTHER);
     const months = data.months;
+    if (others.length) {
+      shownPeople.push({ id: 'otros', name: 'Otros', color: OTHER });
+      for (const m of months) m.by.set('otros', others.reduce((a, p) => a + (m.by.get(p.id) || 0), 0));
+    }
     const totals = months.map((m) => shownPeople.reduce((a, p) => a + (m.by.get(p.id) || 0), 0));
     const max = Math.max(1, ...totals);
     const cols = months.map((m, i) => {
@@ -106,6 +117,43 @@ function mount(box, people) {
         h('div', { class: 'wv-max muted small' }, max.toLocaleString('es-ES')),
         h('div', { class: 'wv-cols' }, cols)),
       h('p', { class: 'muted small wv-note' }, 'Cuenta el mes en que se vio por última vez.'));
+  }
+
+  // The headline figures, for everyone or for the chosen user.
+  function kpis(data, active) {
+    const mine = (p) => !state.user || p.id === state.user;
+    const views = active.filter(mine).reduce((a, p) => a + (state.kind === 'movies' ? p.count : p.episodes), 0);
+    const hours = Math.round(active.filter(mine).reduce((a, p) => a + p.ticks, 0) / 36e9);
+    const top = [...active].sort((a, b) => b.count - a.count)[0];
+    const list = data.titles.filter((t) => !state.user || t.viewers.some((v) => v.id === state.user));
+    const fav = list[0];
+    const n = (x) => x.toLocaleString('es-ES');
+    return h('div', { class: 'wv-kpis' },
+      kpi(state.kind === 'movies' ? 'Películas vistas' : 'Episodios vistos', n(views), state.kind === 'movies' ? `${n(list.length)} títulos distintos` : `en ${n(list.length)} series`),
+      kpi('Horas delante de la pantalla', n(hours), hours >= 48 ? `unos ${n(Math.round(hours / 24))} días seguidos` : 'en total'),
+      state.user ? null : kpi('Quien más ve', top.name, `${n(top.count)} ${state.kind === 'movies' ? 'películas' : 'series'}`, top.color),
+      fav ? kpi(state.user ? 'Lo último' : 'La más vista', fav.name, state.user ? fav.viewers.find((v) => v.id === state.user)?.when || '' : `por ${fav.viewers.length} ${fav.viewers.length === 1 ? 'persona' : 'personas'}`, null, fav.poster) : null);
+  }
+
+  // One purple bar per genre (counting each title once per person who saw it).
+  function genres(data) {
+    const counts = new Map();
+    for (const t of data.titles) {
+      const n = t.viewers.filter((v) => !state.user || v.id === state.user).length;
+      if (!n) continue;
+      for (const g of t.genres) counts.set(g, (counts.get(g) || 0) + n);
+    }
+    const top = [...counts].sort((a, b) => b[1] - a[1]).slice(0, 8);
+    if (!top.length) return h('p', { class: 'muted' }, 'Sin géneros en Jellyfin.');
+    const max = top[0][1];
+    return h('div', { class: 'wv-bars' }, top.map(([g, c]) => {
+      const row = h('div', { class: 'wv-bar-row' },
+        h('span', { class: 'wv-bar-name' }, g),
+        h('span', { class: 'wv-bar-track' }, h('span', { class: 'wv-bar', style: { width: `${(c / max) * 100}%`, background: ACCENT } })),
+        h('span', { class: 'wv-bar-value' }, c.toLocaleString('es-ES')));
+      tip.on(row, () => [h('b', null, g), h('div', null, `${c.toLocaleString('es-ES')} ${state.kind === 'movies' ? 'películas vistas' : 'series seguidas'}`)]);
+      return row;
+    }));
   }
 
   // Posters with who has seen each one.
@@ -150,7 +198,9 @@ function shape(people, kind) {
   const out = people.map((p) => {
     const items = kind === 'movies' ? p.movies : p.episodes;
     const seen = new Map(); // title id → { episodes, last }
+    let ticks = 0;
     for (const it of items) {
+      ticks += it.RunTimeTicks || 0;
       const when = it.UserData?.LastPlayedDate;
       if (when) {
         const d = new Date(when);
@@ -165,7 +215,7 @@ function shape(people, kind) {
       seen.set(id, s);
       if (!titles.has(id)) {
         titles.set(id, {
-          id, name: kind === 'movies' ? it.Name : it.SeriesName || it.Name, viewers: [], last: '',
+          id, name: kind === 'movies' ? it.Name : it.SeriesName || it.Name, viewers: [], last: '', genres: it.Genres || [],
           poster: kind === 'movies' ? posterSrc(ctx.api, it, 240) : it.SeriesPrimaryImageTag ? ctx.api.image(it.SeriesId, 'Primary', { width: 240, tag: it.SeriesPrimaryImageTag }) : null,
         });
       }
@@ -177,12 +227,21 @@ function shape(people, kind) {
     }
     const lastItem = items[0];
     return {
-      ...p, count: seen.size, episodes: items.length,
+      ...p, count: seen.size, episodes: items.length, ticks,
       last: lastItem ? (kind === 'movies' ? lastItem.Name : `${lastItem.SeriesName || ''}`) : '',
     };
   });
   const list = [...titles.values()].sort((a, b) => (b.viewers.length - a.viewers.length) || b.last.localeCompare(a.last));
   return { kind, people: out, months, titles: list };
+}
+
+function kpi(label, value, sub, color, poster) {
+  return h('div', { class: 'wv-kpi' },
+    poster ? h('div', { class: 'wv-kpi-art', style: { backgroundImage: `url("${poster}")` } }) : null,
+    h('div', { class: 'wv-kpi-text' },
+      h('div', { class: 'wv-kpi-label' }, label),
+      h('div', { class: 'wv-kpi-value' }, color ? h('span', { class: 'wv-dot big', style: { background: color } }) : null, value),
+      sub ? h('div', { class: 'wv-kpi-sub' }, sub) : null));
 }
 
 function avatar(v) {

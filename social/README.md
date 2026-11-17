@@ -40,6 +40,8 @@ JELLYFIN_URL=http://localhost:8096 JELLYFIN_API_KEY=tu-clave node server.js
 ## Cómo lo encuentra Lumen
 
 - **En casa:** si Jellyfin va por `http://`, Lumen prueba solo el puerto 8097 de la misma máquina. No hay que configurar nada.
+- **En la web (https), sin configurar nada:** Lumen prueba también el puerto siguiente al de Jellyfin
+  (Jellyfin en `:8443` → servicio en `:8444`) y la ruta `/lumen-social` del mismo dominio.
 - **Desde fuera o en la web (https):** la web de Lumen va por https y no puede hablar con un servicio `http`. Publica el
   servicio en el mismo proxy inverso que Jellyfin, por ejemplo en `https://jellyfin.midominio.com/lumen-social/`
   (el servicio acepta cualquier prefijo antes de `/api/`). Después:
