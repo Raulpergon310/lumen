@@ -15,21 +15,20 @@ function timeoutSignal(ms) {
 let found = null; // { api, url } | { api, url: null }
 let finding = null;
 
-// Where to look: the address saved for this server, one from an invitation link (?social=…),
-// and the Jellyfin machine itself on the default port (http servers only: an https page can't
-// talk to a plain http service).
+// Where to look: the addresses saved for this server (the one at home and, learnt from the service
+// itself, the one from outside), one from an invitation link (?social=…), and the Jellyfin machine
+// itself on the default port. An https page can't talk to a plain http service, so those are skipped.
 function candidates() {
   const server = ctx.savedServers?.().find((s) => s.id === ctx.server?.id);
-  const list = [server?.socialUrl, new URLSearchParams(location.search).get('social')];
+  const list = [...(server?.socialUrls || []), server?.socialUrl, new URLSearchParams(location.search).get('social')];
   try {
-    const u = new URL(ctx.api.url);
-    if (u.protocol === 'http:') list.push(`http://${u.hostname}:${PORT}`);
-    for (const alt of server?.urls || []) {
-      const a = new URL(alt);
-      if (a.protocol === 'http:') list.push(`http://${a.hostname}:${PORT}`);
+    for (const url of [ctx.api.url, ...(server?.urls || [])]) {
+      const u = new URL(url);
+      if (u.protocol === 'http:') list.push(`http://${u.hostname}:${PORT}`);
     }
   } catch {}
-  return [...new Set(list.filter(Boolean).map(normalize))];
+  const httpsPage = location.protocol === 'https:';
+  return [...new Set(list.filter(Boolean).map(normalize))].filter((u) => !httpsPage || u.startsWith('https:'));
 }
 
 export function normalize(url) {
@@ -46,33 +45,36 @@ export async function ping(url, timeout = 4000) {
   return j;
 }
 
-// The service's address for the current server, or null. Looked up once per session.
+// The service's address for the current server, or null. All known addresses are tried at once and
+// the first that answers wins (home or away). Looked up once per session.
 export function socialUrl() {
   const api = ctx.api;
   if (!api) return Promise.resolve(null);
   if (found?.api === api) return Promise.resolve(found.url);
   if (finding?.api === api) return finding.p;
-  const p = (async () => {
-    for (const url of candidates()) {
-      try {
-        await ping(url);
-        remember(url);
-        found = { api, url };
-        return url;
-      } catch {}
+  const list = candidates();
+  const p = new Promise((resolve) => {
+    let pending = list.length;
+    if (!pending) return resolve(null);
+    for (const url of list) {
+      ping(url).then((info) => {
+        remember(url, info.publicUrl);
+        resolve(url);
+      }, () => { if (--pending === 0) resolve(null); });
     }
-    found = { api, url: null };
-    return null;
-  })();
+  }).then((url) => { found = { api, url }; return url; });
   finding = { api, p };
   return p;
 }
 
-function remember(url) {
+function remember(...urls) {
   const id = ctx.server?.id;
   const list = ctx.savedServers?.() || [];
-  if (!id || list.find((s) => s.id === id)?.socialUrl === url) return;
-  store.set('servers', list.map((s) => (s.id === id ? { ...s, socialUrl: url } : s)));
+  const entry = list.find((s) => s.id === id);
+  if (!entry) return;
+  const known = [...new Set([...urls.filter(Boolean).map(normalize), ...(entry.socialUrls || []), entry.socialUrl].filter(Boolean))].slice(0, 4);
+  if (JSON.stringify(known) === JSON.stringify(entry.socialUrls)) return;
+  store.set('servers', list.map((s) => (s.id === id ? { ...s, socialUrls: known, socialUrl: undefined } : s)));
 }
 
 // Settings: set (or clear) the address by hand.
@@ -80,7 +82,8 @@ export async function setSocialUrl(url) {
   const id = ctx.server?.id;
   url = normalize(url);
   if (url) await ping(url, 6000);
-  store.set('servers', (ctx.savedServers?.() || []).map((s) => (s.id === id ? { ...s, socialUrl: url || undefined } : s)));
+  // A typed address goes first; clearing the field forgets them all (they'll be found again at home).
+  store.set('servers', (ctx.savedServers?.() || []).map((s) => (s.id === id ? { ...s, socialUrl: undefined, socialUrls: url ? [url, ...(s.socialUrls || []).filter((x) => x !== url)] : undefined } : s)));
   found = null;
   finding = null;
   return url;

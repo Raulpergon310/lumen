@@ -18,6 +18,9 @@ const JELLYFIN_URL = String(process.env.JELLYFIN_URL || 'http://localhost:8096')
 const API_KEY = process.env.JELLYFIN_API_KEY || '';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'data.json');
+// The address friends use from outside (https). Lumen learns it from /api/ping, so a device that has
+// found the service at home once also finds it away from home.
+const PUBLIC_URL = String(process.env.PUBLIC_URL || '').replace(/\/+$/, '');
 
 if (!API_KEY) {
   console.error('Falta JELLYFIN_API_KEY: créala en Jellyfin → Panel de control → Claves API.');
@@ -309,7 +312,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   // Behind a reverse proxy at a sub-path (https://jellyfin.example.com/lumen-social/…) the prefix is dropped.
   const pathname = url.pathname.replace(/^.*?(?=\/api\/)/, '');
-  if (pathname === '/api/ping') return send(res, 200, { app: 'lumen-social', version: VERSION });
+  if (pathname === '/api/ping') return send(res, 200, { app: 'lumen-social', version: VERSION, publicUrl: PUBLIC_URL || null });
 
   const route = routes.find(([m, re]) => m === req.method && re.test(pathname));
   if (!route) return send(res, 404, { error: 'No existe' });

@@ -35,6 +35,7 @@ JELLYFIN_URL=http://localhost:8096 JELLYFIN_API_KEY=tu-clave node server.js
 | `JELLYFIN_API_KEY` | (obligatoria) | Clave API de Jellyfin; nunca sale del servidor |
 | `PORT` | `8097` | Puerto del servicio |
 | `DATA_DIR` | `./data` | Carpeta donde se guardan los datos |
+| `PUBLIC_URL` | (vacía) | Dirección https desde fuera. Un dispositivo que encuentra el servicio en casa aprende esta y la usa cuando sale |
 
 ## Cómo lo encuentra Lumen
 

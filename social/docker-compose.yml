@@ -11,5 +11,7 @@ services:
       JELLYFIN_URL: "http://192.168.1.50:8096"
       # Jellyfin → Panel de control → Claves API → «+». Nunca sale del servidor.
       JELLYFIN_API_KEY: "pega-aqui-la-clave"
+      # Opcional: la dirección https desde fuera (proxy inverso). Lumen la aprende y la usa fuera de casa.
+      PUBLIC_URL: ""
     volumes:
       - ./data:/data
