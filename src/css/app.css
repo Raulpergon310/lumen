@@ -733,28 +733,31 @@ a.person:hover .person-img { transform: scale(1.05); box-shadow: 0 0 0 3px rgba(
 .sub-list .center-fill { min-height: 80px; }
 
 /* Temporadas nuevas */
-/* Borde morado brillante: la serie (o la temporada) tiene algo emitido que aún no está en el servidor. */
-:root { --new-glow: 168, 120, 255; }
+/* Como en Apple TV: borde blanco fino y etiqueta «Nuevo» cuando la serie (o la temporada) tiene algo
+   emitido que aún no está en el servidor. */
+:root { --new-glow: 255, 255, 255; }
 .glow-new { position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: 2;
-  box-shadow: inset 0 0 0 1.5px rgba(var(--new-glow), 0.85), inset 0 0 18px rgba(var(--new-glow), 0.35); }
-.pill.glow { border: 1px solid rgba(var(--new-glow), 0.75); box-shadow: 0 0 10px rgba(var(--new-glow), 0.4); }
-.pill.glow.active { box-shadow: 0 0 14px rgba(var(--new-glow), 0.6); }
+  box-shadow: inset 0 0 0 1.5px rgba(var(--new-glow), 0.7); }
+.glow-new::after { content: "Nuevo"; position: absolute; left: 8px; top: 8px; padding: 3px 8px; border-radius: 6px;
+  background: rgba(255, 255, 255, 0.92); color: #000; font-size: 11px; font-weight: 750; letter-spacing: 0.02em; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35); }
+.pill.glow { border: 1px solid rgba(var(--new-glow), 0.6); }
+.pill.glow.active { border-color: transparent; }
 .pill.missing { background: transparent; border: 1.5px dashed rgba(255, 255, 255, 0.28); color: var(--muted, rgba(255, 255, 255, 0.7)); }
 .pill.missing.glow { border: 1px solid rgba(var(--new-glow), 0.75); }
 .pill.missing.active { background: rgba(255, 255, 255, 0.1); border-style: solid; color: #fff; }
 .pill.missing.glow.active { background: rgba(var(--new-glow), 0.16); }
 .missing-season { grid-column: 1 / span 2; padding: 22px 26px; border-radius: 16px;
   border: 1.5px dashed rgba(255, 255, 255, 0.22); background: rgba(255, 255, 255, 0.04); }
-.missing-season.glow { border: 1px solid rgba(var(--new-glow), 0.7); box-shadow: 0 0 22px rgba(var(--new-glow), 0.22); }
+.missing-season.glow { border: 1px solid rgba(var(--new-glow), 0.45); }
 .missing-season p { margin-top: 6px; }
 .missing-title { font-size: 20px; font-weight: 700; display: flex; align-items: center; }
 .episode-missing { cursor: default; }
 .episode-missing .card-art { display: grid; place-items: center; background: rgba(var(--new-glow), 0.06);
-  border: 1px solid rgba(var(--new-glow), 0.7); box-shadow: 0 0 16px rgba(var(--new-glow), 0.25); overflow: visible; }
+  border: 1px solid rgba(var(--new-glow), 0.4); overflow: visible; }
 .episode-missing:hover .card-art { transform: none; box-shadow: none; }
 .missing-count { font-size: 22px; font-weight: 700; color: rgba(255, 255, 255, 0.75); letter-spacing: 0.02em; }
 .new-season-note { display: inline-flex; align-items: center; gap: 8px; margin-top: 10px; padding: 8px 8px 8px 14px; border-radius: 12px;
-  background: rgba(var(--new-glow), 0.1); border: 1px solid rgba(var(--new-glow), 0.45); font-size: 14px; }
+  background: rgba(var(--new-glow), 0.1); border: 1px solid rgba(var(--new-glow), 0.18); font-size: 14px; }
 
 /* Identificar */
 .id-form-wrap { padding: 0 26px; }
