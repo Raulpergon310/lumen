@@ -12,7 +12,7 @@ const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const PORT = Number(process.env.PORT) || 8097;
 const JELLYFIN_URL = String(process.env.JELLYFIN_URL || 'http://localhost:8096').replace(/\/+$/, '');
 const API_KEY = process.env.JELLYFIN_API_KEY || '';
@@ -28,7 +28,8 @@ if (!API_KEY) {
 }
 
 // ---------- storage ----------
-let db = { ratings: {}, watchlist: {}, recs: [] };
+// hidden: users who chose not to appear in "who else has seen it".
+let db = { ratings: {}, watchlist: {}, recs: [], hidden: {} };
 try {
   db = { ...db, ...JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')) };
 } catch (e) {
@@ -48,7 +49,9 @@ function save() {
 function flush() {
   if (!saveTimer) return;
   clearTimeout(saveTimer);
-  fs.writeFileSync(DATA_FILE, JSON.stringify(db));
+  const tmp = DATA_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(db));
+  fs.renameSync(tmp, DATA_FILE);
 }
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { flush(); process.exit(0); });
 
@@ -73,9 +76,10 @@ function cached(map, key, ms, fn) {
   return p;
 }
 
+// Kept only a minute, so a session closed in Jellyfin stops working here soon after.
 const sessions = new Map();
 function whoIs(token) {
-  return cached(sessions, token, 10 * 60 * 1000, async () => {
+  return cached(sessions, token, 60 * 1000, async () => {
     const u = await jf('/Users/Me', token).catch(async (e) => {
       if (e.status === 401 || e.status === 403) throw e;
       throw Object.assign(new Error('Jellyfin no responde'), { status: 502 });
@@ -146,12 +150,18 @@ function readBody(req) {
   });
 }
 
+// Who else has seen it, without me and without those who asked not to appear (filtered after the
+// cache, so changing the setting applies at once).
+async function watchedByOthers(me, itemId) {
+  return (await watched(itemId)).filter((u) => u.id !== me.id && !db.hidden[u.id]);
+}
+
 function ratingsOf(itemId) {
   return Object.entries(db.ratings[itemId] || {}).map(([userId, r]) => ({ userId, score: r.score, at: r.at }));
 }
 
 async function itemInfo(me, itemId, withWatched = true) {
-  const [list, seen] = await Promise.all([users().catch(() => []), withWatched ? watched(itemId).catch(() => []) : null]);
+  const [list, seen] = await Promise.all([users().catch(() => []), withWatched ? watchedByOthers(me, itemId).catch(() => []) : null]);
   const nameOf = (id) => list.find((u) => u.id === id)?.name || 'Alguien';
   const ratings = ratingsOf(itemId).map((r) => ({ ...r, name: nameOf(r.userId), me: r.userId === me.id }));
   const scores = ratings.map((r) => r.score);
@@ -159,7 +169,7 @@ async function itemInfo(me, itemId, withWatched = true) {
     ratings: ratings.sort((a, b) => b.at.localeCompare(a.at)),
     average: scores.length ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10 : null,
     mine: db.ratings[itemId]?.[me.id]?.score ?? null,
-    watched: seen ? seen.filter((u) => u.id !== me.id) : undefined,
+    watched: seen || undefined,
     onWatchlist: !!db.watchlist[me.id]?.[itemId],
     recommendedToMe: db.recs.filter((r) => r.itemId === itemId && r.to === me.id && !r.dismissed)
       .map((r) => ({ id: r.id, from: { id: r.from, name: nameOf(r.from) }, note: r.note, at: r.at })),
@@ -223,7 +233,17 @@ const routes = [
 
   // ?watched=0 answers at once; who has seen it comes apart from /watched (it asks Jellyfin about every user).
   ['GET', /^\/api\/items\/([^/]+)$/, (me, [itemId], _b, url) => itemInfo(me, itemId, url.searchParams.get('watched') !== '0')],
-  ['GET', /^\/api\/items\/([^/]+)\/watched$/, async (me, [itemId]) => (await watched(itemId)).filter((u) => u.id !== me.id)],
+  ['GET', /^\/api\/items\/([^/]+)\/watched$/, (me, [itemId]) => watchedByOthers(me, itemId)],
+
+  // My own settings: { hideWatched } = don't show me in "who else has seen it".
+  ['GET', /^\/api\/me$/, (me) => ({ id: me.id, name: me.name, hideWatched: !!db.hidden[me.id] })],
+  ['PUT', /^\/api\/me$/, (me, _m, body) => {
+    if (typeof body.hideWatched !== 'boolean') throw Object.assign(new Error('Falta hideWatched'), { status: 400 });
+    if (body.hideWatched) db.hidden[me.id] = true;
+    else delete db.hidden[me.id];
+    save();
+    return { id: me.id, name: me.name, hideWatched: body.hideWatched };
+  }],
 
   // Ratings and watched for many items at once (cards): { itemId: { average, count, mine } }.
   ['GET', /^\/api\/ratings$/, (me, _m, _b, url) => {

@@ -36,6 +36,7 @@
       "paths.js",
       "updater.js",
       "hdr.js",
+      "dpapi.js",
       "src/**/*",
       "build/icon.png",
       "node_modules/hls.js/dist/hls.min.js",

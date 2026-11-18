@@ -1,10 +1,11 @@
-const { app, BaseWindow, BrowserWindow, protocol, ipcMain, shell, Menu, powerSaveBlocker, screen } = require('electron');
+const { app, BaseWindow, BrowserWindow, protocol, ipcMain, shell, Menu, powerSaveBlocker, screen, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { resolveAppPath, mimeFor } = require('./paths');
 const { setupUpdates } = require('./updater');
 const hdr = require('./hdr');
+const dpapi = require('./dpapi');
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
@@ -51,11 +52,44 @@ function readConfig() {
 let config = readConfig();
 if (!config.deviceId) config.deviceId = crypto.randomUUID();
 
+// Jellyfin session tokens are kept encrypted on disk with the Windows user's key (DPAPI, see
+// dpapi.js): `token` lives only in memory, `tokenSealed` in config.json.
+function sealTokens(cfg) {
+  if (!Array.isArray(cfg.servers) || !dpapi.available()) return cfg;
+  return {
+    ...cfg,
+    servers: cfg.servers.map((s) => {
+      if (!s?.token) return s;
+      const { token, ...rest } = s;
+      try {
+        return { ...rest, tokenSealed: dpapi.encrypt(token) };
+      } catch (e) {
+        log('no se pudo cifrar la sesión:', e.message);
+        return s;
+      }
+    }),
+  };
+}
+
+function openTokens() {
+  if (!Array.isArray(config.servers) || !dpapi.available()) return;
+  config.servers = config.servers.map((s) => {
+    if (!s?.tokenSealed) return s;
+    const { tokenSealed, ...rest } = s;
+    try {
+      return { ...rest, token: dpapi.decrypt(tokenSealed) };
+    } catch (e) {
+      log('no se pudo descifrar la sesión de', rest.name, e.message);
+      return { ...rest, token: null };
+    }
+  });
+}
+
 function writeConfig() {
   try {
     fs.mkdirSync(userDir, { recursive: true });
     const tmp = CONFIG_FILE + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(config, null, 2));
+    fs.writeFileSync(tmp, JSON.stringify(sealTokens(config), null, 2));
     fs.renameSync(tmp, CONFIG_FILE);
   } catch (e) {
     log('no se pudo guardar config:', e.message);
@@ -105,6 +139,10 @@ function mpvConnect(state, attempt = 0) {
     state.sock = sock;
     MPV_PROPS.forEach((p, i) => mpvCommand(['observe_property', i + 1, p]));
     mpvSend({ event: 'ready' });
+    if (state.load) {
+      mpvCommand(['loadfile', state.load.url, 'replace', -1, state.load.options]);
+      state.load = null;
+    }
   });
   sock.on('data', (chunk) => {
     state.buf += chunk;
@@ -131,6 +169,8 @@ ipcMain.handle('mpv:available', () => fs.existsSync(MPV_EXE));
 // (`run`, `subprocess`) or load scripts, so anything else is refused here.
 const MPV_OPTIONS = new Set(['idle', 'start', 'force-media-title', 'aid', 'sid', 'alang', 'slang', 'sub-files', 'af']);
 const MPV_SETTABLE = new Set(['time-pos', 'volume', 'mute', 'pause', 'aid', 'sid']);
+// Session tokens never go into the log.
+const redact = (s) => String(s).replace(/(api_key=|Token=")[^&\s"]+/gi, '$1***');
 const isHttpUrl = (u) => typeof u === 'string' && /^https?:\/\//i.test(u);
 const isPlain = (v) => ['string', 'number', 'boolean'].includes(typeof v);
 
@@ -172,12 +212,10 @@ function mpvCommandAllowed(c) {
   }
 }
 
-// Start options: the ones above, plus a single http(s) URL after `--`.
+// Start options: only the ones above (the file itself comes later through IPC, see mpv:start).
 function mpvArgsAllowed(args) {
   if (!Array.isArray(args) || !args.every((x) => typeof x === 'string')) return false;
-  const sep = args.indexOf('--');
-  if (sep < 0 || sep !== args.length - 2 || !isHttpUrl(args[sep + 1])) return false;
-  return args.slice(0, sep).every((x) => {
+  return args.every((x) => {
     const m = /^--([a-z-]+)=/.exec(x);
     return !!m && MPV_OPTIONS.has(m[1]);
   });
@@ -328,9 +366,11 @@ ipcMain.on('win:move-by', (_e, dx, dy) => {
   win.setPosition(Math.round(x + dx), Math.round(y + dy));
 });
 
-ipcMain.handle('mpv:start', (_e, args, { embed = false } = {}) => {
-  if (!mpvArgsAllowed(args)) {
-    log('mpv: argumentos rechazados', JSON.stringify(args).slice(0, 300));
+// url + options: the file to play, sent with loadfile as soon as mpv's pipe answers. The URL carries
+// the Jellyfin token, so it never goes on mpv's command line (visible to every program on the PC).
+ipcMain.handle('mpv:start', (_e, args, { embed = false, url, options } = {}) => {
+  if (!mpvArgsAllowed(args) || !isHttpUrl(url) || !loadfileOptionsAllowed(options)) {
+    log('mpv: arranque rechazado', redact(JSON.stringify([args, options])).slice(0, 300));
     return false;
   }
   if (mpv) {
@@ -346,19 +386,19 @@ ipcMain.handle('mpv:start', (_e, args, { embed = false } = {}) => {
     extra.push(`--wid=${nativeHandle(host)}`, '--fullscreen=no', '--osc=no', '--osd-bar=no', '--input-cursor=no', '--cursor-autohide=no');
     openOverlay();
   }
-  const proc = spawn(MPV_EXE, [`--input-ipc-server=${pipe}`, ...extra, ...args], { windowsHide: false, stdio: ['ignore', 'ignore', 'pipe'] });
-  const state = { proc, pipe, sock: null, buf: '' };
+  const proc = spawn(MPV_EXE, [`--input-ipc-server=${pipe}`, '--idle=yes', ...extra, ...args], { windowsHide: false, stdio: ['ignore', 'ignore', 'pipe'] });
+  const state = { proc, pipe, sock: null, buf: '', load: { url, options: options || '' } };
   let stderrTail = '';
   proc.stderr.on('data', (d) => { stderrTail = (stderrTail + d).slice(-2000); });
   proc.on('error', (e) => { log('mpv spawn error', e.message); mpvSend({ event: 'process-exit', code: -1, error: e.message }); });
   proc.on('exit', (code) => {
-    if (code) log('mpv exit', code, stderrTail.replace(/\s+/g, ' ').slice(-400));
+    if (code) log('mpv exit', code, redact(stderrTail).replace(/\s+/g, ' ').slice(-400));
     if (mpv === state) {
       mpv = null;
       closeOverlay();
-      hdr.restore(log);
+      restoreHdr();
     }
-    mpvSend({ event: 'process-exit', code, stderr: stderrTail.slice(-600) });
+    mpvSend({ event: 'process-exit', code, stderr: redact(stderrTail).slice(-600) });
   });
   mpv = state;
   mpvConnect(state);
@@ -381,13 +421,28 @@ ipcMain.handle('hdr:enable', async () => {
   const centre = { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) };
   const point = screen.dipToScreenPoint ? screen.dipToScreenPoint(centre) : centre;
   try {
-    return await hdr.enable(point, log);
+    const r = await hdr.enable(point, log);
+    // Remembered on disk too, so a crash mid-film doesn't leave the desktop in HDR.
+    if (r.screen) {
+      config.hdrTurnedOn = r.screen;
+      writeConfig();
+    }
+    return { state: r.state };
   } catch (e) {
     log('hdr:', e.message);
     return { state: 'failed' };
   }
 });
-ipcMain.handle('hdr:restore', () => hdr.restore(log));
+ipcMain.handle('hdr:restore', () => restoreHdr());
+
+function restoreHdr() {
+  const ok = hdr.restore(log);
+  if (config.hdrTurnedOn) {
+    delete config.hdrTurnedOn;
+    writeConfig();
+  }
+  return ok;
+}
 ipcMain.handle('mpv:stop', () => {
   if (!mpv) return;
   // Leave the video right away; mpv finishes shutting down in the background.
@@ -444,9 +499,19 @@ function createWindow() {
   win.webContents.on('will-navigate', (e, url) => {
     if (!url.startsWith('app://')) e.preventDefault();
   });
+  // A crashed page is reloaded, but not forever: a page that dies on every load would loop.
+  let crashes = [];
   win.webContents.on('render-process-gone', (_e, d) => {
     log('render-process-gone', d.reason);
-    if (d.reason !== 'clean-exit') setTimeout(() => win && !win.isDestroyed() && win.reload(), 500);
+    if (d.reason === 'clean-exit') return;
+    const now = Date.now();
+    crashes = crashes.filter((t) => now - t < 60000).concat(now);
+    if (crashes.length > 3) {
+      log('la ventana se ha caído varias veces seguidas: no se recarga más');
+      dialog.showErrorBox('Lumen', `La ventana se ha cerrado inesperadamente varias veces seguidas. Cierra Lumen y vuelve a abrirlo.\n\nHay más detalles en ${LOG_FILE}`);
+      return;
+    }
+    setTimeout(() => win && !win.isDestroyed() && win.reload(), 500);
   });
   win.on('unresponsive', () => log('ventana no responde'));
   win.webContents.on('before-input-event', (_e, input) => {
@@ -494,6 +559,15 @@ app.whenReady().then(() => {
     }
   });
   log('inicio v' + app.getVersion());
+  openTokens();
+  // Sessions saved in plain text by older versions are encrypted from now on.
+  if (config.servers?.some((s) => s?.token)) writeConfig();
+  // Lumen closed unexpectedly during an HDR film: switch HDR back off.
+  if (config.hdrTurnedOn) {
+    hdr.restoreScreen(config.hdrTurnedOn, log);
+    delete config.hdrTurnedOn;
+    writeConfig();
+  }
   createWindow();
   setupUpdates({ getWin: () => win, config, log });
 });
@@ -501,6 +575,6 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => app.quit());
 app.on('will-quit', () => {
   if (mpv) { try { mpv.proc.kill(); } catch {} }
-  hdr.restore(log);
+  restoreHdr();
 });
 process.on('uncaughtException', (e) => log('uncaughtException', e.stack || e.message));

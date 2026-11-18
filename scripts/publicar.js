@@ -2,9 +2,10 @@
 // app never sees a version whose installer is still copying). Usage: npm run publicar [-- "notas"]
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const pkg = require('../package.json');
 
-const dir = process.env.LUMEN_UPDATE_DIR || 'Z:\Lumen';
+const dir = process.env.LUMEN_UPDATE_DIR || 'Z:\\Lumen';
 const file = `Lumen-Setup-${pkg.version}.exe`;
 const src = path.join(__dirname, '..', 'dist', file);
 
@@ -13,7 +14,9 @@ try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { console.error(`No pu
 
 fs.copyFileSync(src, path.join(dir, file + '.part'));
 fs.renameSync(path.join(dir, file + '.part'), path.join(dir, file));
-const latest = { version: pkg.version, file, notes: process.argv[2] || '', date: new Date().toISOString() };
+// The installed apps only run an installer whose SHA-256 matches this one.
+const sha256 = crypto.createHash('sha256').update(fs.readFileSync(src)).digest('hex');
+const latest = { version: pkg.version, file, sha256, notes: process.argv[2] || '', date: new Date().toISOString() };
 fs.writeFileSync(path.join(dir, 'latest.json.tmp'), JSON.stringify(latest, null, 2));
 fs.renameSync(path.join(dir, 'latest.json.tmp'), path.join(dir, 'latest.json'));
 // Older installers are no longer needed.

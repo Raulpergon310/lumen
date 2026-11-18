@@ -209,9 +209,10 @@ class MpvSession {
         const r = await host.hdr.enable().catch(() => null);
         if (r?.state === 'enabled') this.renderOverlay('Abriendo…');
       }
-      const args = Object.entries(opts).filter(([, v]) => v !== undefined).map(([k, v]) => `--${k}=${v}`);
+      // The URL (it carries the session token) and its options go through mpv's IPC once it is up,
+      // never on the command line, where any program on the PC could read them.
       this.running = true;
-      await host.mpv.start(['--idle=yes', ...args, '--', url], { embed: store.get('mpvEmbedded', true) });
+      await host.mpv.start([], { embed: store.get('mpvEmbedded', true), url, options: encodeOpts(opts) });
     }
 
     api.segments(item.Id).then((s) => {

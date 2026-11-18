@@ -163,4 +163,6 @@ export const social = {
   users: () => call('GET', '/api/users'),
   inbox: () => call('GET', '/api/inbox'),
   stats: () => call('GET', '/api/stats'),
+  me: () => call('GET', '/api/me'),
+  setHideWatched: (hide) => call('PUT', '/api/me', { hideWatched: !!hide }),
 };

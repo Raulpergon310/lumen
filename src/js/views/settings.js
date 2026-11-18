@@ -87,6 +87,37 @@ function socialSetting() {
     h('div', { class: 'setting-row' }, input, save));
 }
 
+// Privacy on the friends service: stay out of "quién más la ha visto". Hidden until the service
+// answers (older services without /api/me never show it).
+function privacySetting() {
+  const input = h('input', { type: 'checkbox' });
+  const row = h('label', { class: 'setting', hidden: true },
+    h('span', { class: 'setting-text' },
+      h('span', null, 'No mostrar lo que veo a mis amigos'),
+      h('span', { class: 'hint' }, 'No apareces en «quién más la ha visto» de nadie. Tus notas y recomendaciones siguen viéndose.')),
+    h('span', { class: 'switch' }, input, h('span', { class: 'switch-ui' })));
+  import('../social.js').then(async (m) => {
+    if (!(await m.socialUrl())) return;
+    const me = await m.social.me();
+    input.checked = !!me.hideWatched;
+    row.hidden = false;
+  }).catch(() => {});
+  input.addEventListener('change', async () => {
+    input.disabled = true;
+    try {
+      const { social } = await import('../social.js');
+      await social.setHideWatched(input.checked);
+      toast(input.checked ? 'Ya no apareces en «quién más la ha visto»' : 'Vuelves a aparecer en «quién más la ha visto»');
+    } catch (e) {
+      input.checked = !input.checked;
+      toast(e.message, 'error');
+    } finally {
+      input.disabled = false;
+    }
+  });
+  return row;
+}
+
 export function settingsView() {
   const servers = ctx.savedServers();
   const serverList = h('div', { class: 'setting-list' }, servers.map((s) => h('div', { class: 'setting' },
@@ -152,7 +183,8 @@ export function settingsView() {
       seasonSetting()),
     h('section', { class: 'settings-group' },
       h('h2', null, 'Amigos'),
-      socialSetting()),
+      socialSetting(),
+      privacySetting()),
     h('section', { class: 'settings-group' },
       h('h2', null, 'Servidores'),
       serverList),

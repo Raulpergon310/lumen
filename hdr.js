@@ -104,13 +104,24 @@ async function enable(point, log = () => {}) {
   if (!setHdr(s, true)) { log('hdr: no se pudo activar'); return { state: 'failed' }; }
   turnedOn = s;
   log('hdr: activado para la reproducción');
+  const screen = { id: s.id, adapterLow: s.adapterLow, adapterHigh: s.adapterHigh };
   // The screen takes a moment to switch mode; mpv must start after, so it sees an HDR output.
   for (let i = 0; i < 20; i++) {
     await new Promise((r) => setTimeout(r, 100));
     if (screens().some((x) => x.id === s.id && x.adapterLow === s.adapterLow && x.on)) break;
   }
   await new Promise((r) => setTimeout(r, 600));
-  return { state: 'enabled' };
+  return { state: 'enabled', screen };
+}
+
+// After a crash: switch HDR off on the screen Lumen had switched on (saved in the config), if it is
+// still connected and in HDR.
+function restoreScreen(saved, log = () => {}) {
+  const s = screens().find((x) => x.id === saved?.id && x.adapterLow === saved?.adapterLow && x.adapterHigh === saved?.adapterHigh);
+  if (!s || !s.on) return false;
+  const ok = setHdr(s, false);
+  log(ok ? 'hdr: desactivado tras un cierre inesperado' : 'hdr: no se pudo desactivar tras un cierre inesperado');
+  return ok;
 }
 
 function restore(log = () => {}) {
@@ -122,4 +133,4 @@ function restore(log = () => {}) {
   return ok;
 }
 
-module.exports = { screens, enable, restore };
+module.exports = { screens, enable, restore, restoreScreen };

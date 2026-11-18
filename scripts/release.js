@@ -10,6 +10,12 @@ const dist = path.join(__dirname, '..', 'dist');
 const files = [`Lumen-Setup-${pkg.version}.exe`, 'Lumen-tv.apk'].map((f) => path.join(dist, f));
 for (const f of files) if (!fs.existsSync(f)) { console.error(`Falta ${f}`); process.exit(1); }
 
+// The installer's SHA-256 goes up next to it: the installed apps refuse an installer that doesn't match.
+const installer = files[0];
+const sha256 = require('crypto').createHash('sha256').update(fs.readFileSync(installer)).digest('hex');
+fs.writeFileSync(installer + '.sha256', `${sha256}  ${path.basename(installer)}\n`);
+files.push(installer + '.sha256');
+
 // gh may not be on PATH yet in a shell opened before it was installed.
 const gh = [process.env.GH_PATH, path.join(process.env.ProgramFiles || '', 'GitHub CLI', 'gh.exe')].find((p) => p && fs.existsSync(p)) || 'gh';
 const notes = process.argv[2] || `Lumen ${pkg.version}`;

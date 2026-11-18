@@ -8,6 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { spawn } = require('child_process');
+const crypto = require('crypto');
 const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 
@@ -34,7 +35,18 @@ function setupUpdates({ getWin, config, log }) {
 
   async function fromNas() {
     const info = JSON.parse(await fs.promises.readFile(path.join(config.updateDir, 'latest.json'), 'utf8'));
-    return { version: info.version, name: info.file, path: path.join(config.updateDir, info.file), notes: info.notes || '' };
+    return { version: info.version, name: info.file, path: path.join(config.updateDir, info.file), notes: info.notes || '', sha256: info.sha256 };
+  }
+
+  // The installer's SHA-256: GitHub's own digest of the asset, or the .sha256 file `npm run release`
+  // uploads next to it.
+  async function githubSha256(rel, asset) {
+    if (/^sha256:[0-9a-f]{64}$/i.test(asset.digest || '')) return asset.digest.slice(7);
+    const file = (rel.assets || []).find((a) => a.name === asset.name + '.sha256');
+    if (!file) return null;
+    const r = await fetch(file.browser_download_url, { headers: { 'User-Agent': 'Lumen' }, signal: AbortSignal.timeout(15000) });
+    if (!r.ok) throw new Error(`hash ${r.status}`);
+    return (await r.text()).trim().split(/\s+/)[0];
   }
 
   async function fromGitHub() {
@@ -46,7 +58,13 @@ function setupUpdates({ getWin, config, log }) {
     const rel = await r.json();
     const asset = (rel.assets || []).find((a) => INSTALLER.test(a.name));
     if (!asset) throw new Error('la versión publicada no trae instalador');
-    return { version: String(rel.tag_name).replace(/^v/, ''), name: asset.name, url: asset.browser_download_url, notes: rel.body || '' };
+    return { version: String(rel.tag_name).replace(/^v/, ''), name: asset.name, url: asset.browser_download_url, notes: rel.body || '', sha256: await githubSha256(rel, asset) };
+  }
+
+  async function sha256Of(file) {
+    const hash = crypto.createHash('sha256');
+    await pipeline(fs.createReadStream(file), hash);
+    return hash.digest('hex');
   }
 
   async function fetchTo(info, dest) {
@@ -73,7 +91,14 @@ function setupUpdates({ getWin, config, log }) {
       const tmpDir = path.join(os.tmpdir(), 'lumen-update');
       await fs.promises.mkdir(tmpDir, { recursive: true });
       const dest = path.join(tmpDir, path.basename(info.name));
+      // Nothing runs unless it is byte for byte the installer that was published.
+      if (!/^[0-9a-f]{64}$/i.test(info.sha256 || '')) throw new Error('la versión publicada no trae su hash SHA-256');
       await fetchTo(info, dest + '.part');
+      const got = await sha256Of(dest + '.part');
+      if (got !== info.sha256.toLowerCase()) {
+        await fs.promises.rm(dest + '.part', { force: true });
+        throw new Error('el instalador descargado no coincide con el publicado (hash distinto)');
+      }
       await fs.promises.rename(dest + '.part', dest);
       ready = { version: info.version, file: dest };
       log('actualización lista', info.version);
