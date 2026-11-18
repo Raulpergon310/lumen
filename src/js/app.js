@@ -14,6 +14,7 @@ import { personView } from './views/person.js';
 import { settingsView } from './views/settings.js';
 import { panelView } from './views/panel.js';
 import { pendingView } from './views/pending.js';
+import { requestsView } from './views/requests.js';
 import { playbackPlan } from './compat.js';
 import { chooseSubtitle, fetchSpanishSubtitles } from './subs.js';
 
@@ -32,6 +33,7 @@ const routes = [
   [/^\/settings$/, settingsView],
   [/^\/panel$/, panelView],
   [/^\/pending$/, pendingView],
+  [/^\/requests$/, requestsView],
 ];
 
 // ---------- errors never leave a blank screen ----------
@@ -187,7 +189,7 @@ async function start() {
   // Look for the friends service now, so the stars are ready by the time a title is opened.
   import('./social.js').then((m) => m.socialUrl()).catch(() => {});
   // Friends' recommendations that arrived while the app was closed.
-  setTimeout(() => import('./friends.js').then((m) => m.notifyRecommendations()).catch(() => {}), 2500);
+  setTimeout(() => import('./friends.js').then((m) => m.notifyRecommendations().finally(() => m.notifyRequests())).catch(() => {}), 2500);
 }
 
 // ---------- router ----------

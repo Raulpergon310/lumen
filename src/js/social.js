@@ -164,5 +164,12 @@ export const social = {
   inbox: () => call('GET', '/api/inbox'),
   stats: () => call('GET', '/api/stats'),
   me: () => call('GET', '/api/me'),
+  // Requests for films and series that aren't on the server.
+  catalog: (q, kind) => call('GET', `/api/catalog?q=${encodeURIComponent(q)}&kind=${kind}`),
+  requests: () => call('GET', '/api/requests'),
+  request: (body) => call('POST', '/api/requests', body),
+  answerRequest: (id, body) => call('PUT', `/api/requests/${id}`, body),
+  cancelRequest: (id) => call('DELETE', `/api/requests/${id}`),
+  requestSeen: (id) => call('POST', `/api/requests/${id}/seen`),
   setHideWatched: (hide) => call('PUT', '/api/me', { hideWatched: !!hide }),
 };

@@ -41,7 +41,10 @@ export async function searchView() {
         group('Colecciones', items.filter((i) => i.Type === 'BoxSet'), posterCard),
         group('Episodios', items.filter((i) => i.Type === 'Episode'), (i) => thumbCard(i), 'grid grid-thumb'),
       ].filter(Boolean);
-      results.replaceChildren(...(sections.length ? sections : [h('p', { class: 'muted center' }, `Sin resultados para “${term}”`)]));
+      // Not on the server, or not what you wanted: ask for it (needs the friends service).
+      const ask = h('p', { class: 'muted center search-ask' }, sections.length ? '¿No está lo que buscas? ' : `Sin resultados para “${term}” en el servidor. `,
+        h('a', { href: `#/requests?q=${encodeURIComponent(term)}` }, 'Pídelo'));
+      results.replaceChildren(...sections, ask);
     } catch (e) {
       if (my === seq) results.replaceChildren(h('p', { class: 'muted center' }, e.message));
     }

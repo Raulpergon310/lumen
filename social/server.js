@@ -1,6 +1,7 @@
 // Lumen social: a tiny service that lives next to Jellyfin and keeps what Jellyfin can't share between
-// users: star ratings, recommendations to friends and a "tengo que verla" list. It also answers who
-// else has watched an item, using an admin API key that never leaves the server.
+// users: star ratings, recommendations to friends, a "tengo que verla" list and requests for films
+// and series that aren't on the server yet. It also answers who else has watched an item, and
+// searches TMDB through Jellyfin for requests, using an admin API key that never leaves the server.
 //
 // No dependencies (Node 20+). Everything is kept in one JSON file in DATA_DIR.
 // Every request must carry the user's own Jellyfin session token (X-Jellyfin-Token): the service asks
@@ -12,7 +13,7 @@ const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
 
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 const PORT = Number(process.env.PORT) || 8097;
 const JELLYFIN_URL = String(process.env.JELLYFIN_URL || 'http://localhost:8096').replace(/\/+$/, '');
 const API_KEY = process.env.JELLYFIN_API_KEY || '';
@@ -29,7 +30,8 @@ if (!API_KEY) {
 
 // ---------- storage ----------
 // hidden: users who chose not to appear in "who else has seen it".
-let db = { ratings: {}, watchlist: {}, recs: [], hidden: {} };
+// requests: films and series friends asked for that aren't on the server (see "requests" below).
+let db = { ratings: {}, watchlist: {}, recs: [], hidden: {}, requests: [] };
 try {
   db = { ...db, ...JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')) };
 } catch (e) {
@@ -59,6 +61,20 @@ for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { flush(); proces
 async function jf(pathname, token, timeout = 8000) {
   const r = await fetch(JELLYFIN_URL + pathname, {
     headers: { Authorization: `MediaBrowser Client="Lumen social", Device="server", DeviceId="lumen-social", Version="${VERSION}", Token="${token}"` },
+    signal: AbortSignal.timeout(timeout),
+  });
+  if (!r.ok) { const e = new Error(`Jellyfin ${r.status}`); e.status = r.status; throw e; }
+  return r.json();
+}
+
+async function jfPost(pathname, body, token, timeout = 30000) {
+  const r = await fetch(JELLYFIN_URL + pathname, {
+    method: 'POST',
+    headers: {
+      Authorization: `MediaBrowser Client="Lumen social", Device="server", DeviceId="lumen-social", Version="${VERSION}", Token="${token}"`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(timeout),
   });
   if (!r.ok) { const e = new Error(`Jellyfin ${r.status}`); e.status = r.status; throw e; }
@@ -122,6 +138,71 @@ function watched(itemId) {
     }));
     return seen.filter(Boolean).sort((a, b) => (b.played - a.played) || String(b.lastPlayed).localeCompare(String(a.lastPlayed)));
   });
+}
+
+// ---------- requests: films and series that aren't on the server ----------
+// A friend searches TMDB (through Jellyfin's own metadata search, with the admin key: Jellyfin only
+// lets administrators use it), picks the right one and asks for it. When a title with the same
+// TMDB / IMDb / TVDB id shows up in the library, the request is marked done and whoever asked is told.
+const KINDS = new Set(['Movie', 'Series']);
+const ID_KEYS = ['tmdb', 'imdb', 'tvdb'];
+const libCache = new Map();
+
+function pickIds(pids) {
+  const out = {};
+  for (const [k, v] of Object.entries(pids || {})) {
+    const key = ID_KEYS.find((x) => x === k.toLowerCase());
+    if (key && v && /^[\w.-]{1,40}$/.test(String(v))) out[key[0].toUpperCase() + key.slice(1)] = String(v);
+  }
+  return out;
+}
+const idKeys = (pids) => Object.entries(pickIds(pids)).map(([k, v]) => `${k.toLowerCase()}:${v.toLowerCase()}`);
+const safeUrl = (u) => (typeof u === 'string' && /^https:\/\/[^\s"'<>]{1,500}$/.test(u) ? u : null);
+
+// Every film and series on the server by provider id, refreshed every few minutes.
+function library() {
+  return cached(libCache, 'all', 3 * 60 * 1000, async () => {
+    const r = await jf('/Items?Recursive=true&IncludeItemTypes=Movie,Series&Fields=ProviderIds&EnableImages=false&EnableUserData=false', API_KEY, 60000);
+    const map = new Map();
+    for (const it of r.Items || []) {
+      for (const key of idKeys(it.ProviderIds)) map.set(`${it.Type}|${key}`, { id: normId(it.Id), name: it.Name });
+    }
+    return map;
+  });
+}
+function inLibrary(lib, kind, pids) {
+  for (const key of idKeys(pids)) { const hit = lib.get(`${kind}|${key}`); if (hit) return hit; }
+  return null;
+}
+function sameTitle(r, kind, pids) {
+  const keys = new Set(idKeys(pids));
+  return r.kind === kind && idKeys(r.providerIds).some((k) => keys.has(k));
+}
+
+// Pending requests whose title has arrived: done, with the library item to open.
+async function settleRequests() {
+  const pending = db.requests.filter((r) => r.status === 'pending');
+  if (!pending.length) return;
+  const lib = await library().catch(() => null);
+  if (!lib) return;
+  let changed = false;
+  for (const r of pending) {
+    const hit = inLibrary(lib, r.kind, r.providerIds);
+    if (hit) { Object.assign(r, { status: 'done', itemId: hit.id, doneAt: new Date().toISOString() }); changed = true; }
+  }
+  if (changed) save();
+}
+setInterval(() => { libCache.clear(); settleRequests().catch(() => {}); }, 10 * 60 * 1000).unref();
+
+const askers = (r) => [r.by, ...(r.also || [])];
+function requestOut(r, me, nameOf) {
+  return {
+    id: r.id, kind: r.kind, name: r.name, year: r.year, poster: r.poster, overview: r.overview, providerIds: r.providerIds,
+    status: r.status, itemId: r.itemId || null, at: r.at, doneAt: r.doneAt || null, reply: r.reply || '',
+    by: { id: r.by, name: nameOf(r.by) }, also: (r.also || []).map((id) => ({ id, name: nameOf(id) })),
+    notes: (r.notes || []).map((n) => ({ from: nameOf(n.from), note: n.note })),
+    mine: askers(r).includes(me.id), canManage: me.admin, canCancel: r.status === 'pending' && askers(r).includes(me.id),
+  };
 }
 
 // ---------- HTTP ----------
@@ -215,6 +296,7 @@ async function stats() {
     version: VERSION,
     system: system(),
     totals: {
+      requests: db.requests.filter((r) => r.status === 'pending').length,
       ratings: rated.reduce((a, r) => a + r.count, 0),
       rated: rated.length,
       recommendations: db.recs.length,
@@ -310,11 +392,119 @@ const routes = [
     return stats();
   }],
 
-  // Home page: what friends recommended to me (newest first) and my own list.
-  ['GET', /^\/api\/inbox$/, async (me) => {
+  // Search TMDB for something to ask for: ?q=dune&kind=Movie|Series. Each result says whether it is
+  // already on the server (itemId) or already requested.
+  ['GET', /^\/api\/catalog$/, async (me, _m, _b, url) => {
+    let q = String(url.searchParams.get('q') || '').trim().slice(0, 100);
+    const kind = url.searchParams.get('kind') === 'Series' ? 'Series' : 'Movie';
+    if (q.length < 2) return [];
+    // "Dune 2021" or "Dune (2021)": the year narrows it down.
+    let year;
+    const m = q.match(/^(.+?)\s*\(?((?:19|20)\d{2})\)?$/);
+    if (m) { q = m[1]; year = Number(m[2]); }
+    const [found, lib, list] = await Promise.all([
+      jfPost(`/Items/RemoteSearch/${kind}`, { SearchInfo: { Name: q, Year: year }, IncludeDisabledProviders: false }, API_KEY)
+        .catch((e) => { throw Object.assign(new Error('Jellyfin no ha podido buscar ahora mismo'), { status: 502 }); }),
+      library().catch(() => new Map()),
+      users().catch(() => []),
+    ]);
+    const nameOf = (id) => list.find((u) => u.id === id)?.name || 'Alguien';
+    return (Array.isArray(found) ? found : []).slice(0, 30).map((r) => {
+      const providerIds = pickIds(r.ProviderIds);
+      const hit = inLibrary(lib, kind, providerIds);
+      const req = db.requests.find((x) => x.status !== 'declined' && sameTitle(x, kind, providerIds));
+      return {
+        kind, name: String(r.Name || '').slice(0, 200), year: r.ProductionYear || null, overview: String(r.Overview || '').slice(0, 600),
+        poster: safeUrl(r.ImageUrl), providerIds, itemId: hit?.id || null, request: req ? requestOut(req, me, nameOf) : null,
+      };
+    }).filter((r) => r.name && Object.keys(r.providerIds).length);
+  }],
+
+  // Everyone's requests (it's a small group of friends): pending first, then the ones already here.
+  ['GET', /^\/api\/requests$/, async (me) => {
+    await settleRequests();
     const list = await users().catch(() => []);
     const nameOf = (id) => list.find((u) => u.id === id)?.name || 'Alguien';
+    const order = { pending: 0, done: 1, declined: 2 };
+    return [...db.requests]
+      .sort((a, b) => (order[a.status] - order[b.status]) || String(b.doneAt || b.at).localeCompare(String(a.doneAt || a.at)))
+      .map((r) => requestOut(r, me, nameOf));
+  }],
+
+  ['POST', /^\/api\/requests$/, async (me, _m, body) => {
+    const kind = KINDS.has(body.kind) ? body.kind : null;
+    const name = String(body.name || '').trim().slice(0, 200);
+    const providerIds = pickIds(body.providerIds);
+    if (!kind || !name || !Object.keys(providerIds).length) throw Object.assign(new Error('Elige un título de la búsqueda'), { status: 400 });
+    const hit = inLibrary(await library().catch(() => new Map()), kind, providerIds);
+    if (hit) throw Object.assign(new Error(`${hit.name} ya está en el servidor`), { status: 409, itemId: hit.id });
+    const note = String(body.note || '').trim().slice(0, 280);
+    const at = new Date().toISOString();
+    let r = db.requests.find((x) => x.status === 'pending' && sameTitle(x, kind, providerIds));
+    if (r) {
+      // Already asked for: count me in.
+      if (!askers(r).includes(me.id)) (r.also ||= []).push(me.id);
+    } else {
+      r = {
+        id: crypto.randomUUID(), kind, name, year: Number(body.year) || null, providerIds, poster: safeUrl(body.poster),
+        overview: String(body.overview || '').slice(0, 600), by: me.id, also: [], notes: [], status: 'pending', at, seen: {},
+      };
+      db.requests.push(r);
+      if (db.requests.length > 2000) db.requests = db.requests.filter((x) => x.status === 'pending').concat(db.requests.filter((x) => x.status !== 'pending').slice(-1000));
+    }
+    if (note) (r.notes ||= []).push({ from: me.id, note, at });
+    save();
+    const list = await users().catch(() => []);
+    return requestOut(r, me, (id) => list.find((u) => u.id === id)?.name || 'Alguien');
+  }],
+
+  // The administrator answers: declined (with a reason) or back to pending; done is automatic, but can be set by hand.
+  ['PUT', /^\/api\/requests\/([^/]+)$/, async (me, [id], body) => {
+    if (!me.admin) throw Object.assign(new Error('Solo el administrador puede responder peticiones'), { status: 403 });
+    const r = db.requests.find((x) => x.id === id);
+    if (!r) throw Object.assign(new Error('No existe'), { status: 404 });
+    if (!['pending', 'declined', 'done'].includes(body.status)) throw Object.assign(new Error('Estado no válido'), { status: 400 });
+    r.status = body.status;
+    r.reply = String(body.reply || '').trim().slice(0, 280);
+    if (body.status === 'done') r.doneAt = new Date().toISOString();
+    r.seen = {};
+    save();
+    const list = await users().catch(() => []);
+    return requestOut(r, me, (uid) => list.find((u) => u.id === uid)?.name || 'Alguien');
+  }],
+
+  // Taking a request back: whoever asked (the next one keeps it if others asked too), or the administrator.
+  ['DELETE', /^\/api\/requests\/([^/]+)$/, (me, [id]) => {
+    const i = db.requests.findIndex((x) => x.id === id);
+    if (i < 0) throw Object.assign(new Error('No existe'), { status: 404 });
+    const r = db.requests[i];
+    if (!me.admin && !askers(r).includes(me.id)) throw Object.assign(new Error('Esa petición no es tuya'), { status: 403 });
+    if (!me.admin && r.status !== 'pending') throw Object.assign(new Error('Esa petición ya está resuelta'), { status: 409 });
+    const left = askers(r).filter((u) => u !== me.id);
+    if (me.admin && !askers(r).includes(me.id)) db.requests.splice(i, 1);
+    else if (left.length) { r.by = left[0]; r.also = left.slice(1); r.notes = (r.notes || []).filter((n) => n.from !== me.id); }
+    else db.requests.splice(i, 1);
+    save();
+    return { ok: true };
+  }],
+
+  // "Ya está": the notice that a request arrived (or was turned down) has been shown.
+  ['POST', /^\/api\/requests\/([^/]+)\/seen$/, (me, [id]) => {
+    const r = db.requests.find((x) => x.id === id);
+    if (r) { (r.seen ||= {})[me.id] = true; save(); }
+    return { ok: true };
+  }],
+
+  // Home page: what friends recommended to me (newest first) and my own list.
+  ['GET', /^\/api\/inbox$/, async (me) => {
+    await settleRequests().catch(() => {});
+    const list = await users().catch(() => []);
+    const nameOf = (id) => list.find((u) => u.id === id)?.name || 'Alguien';
+    const answered = db.requests.filter((r) => r.status !== 'pending' && askers(r).includes(me.id) && !r.seen?.[me.id]);
     return {
+      // My requests that arrived or were turned down, not yet told; and, for the administrator, what's waiting.
+      requestsAnswered: answered.map((r) => ({ id: r.id, name: r.name, kind: r.kind, status: r.status, itemId: r.itemId || null, reply: r.reply || '' })),
+      requestsPending: me.admin ? db.requests.filter((r) => r.status === 'pending').map((r) => ({ id: r.id, name: r.name, at: r.at, by: nameOf(r.by) })) : [],
       recommendations: db.recs.filter((r) => r.to === me.id && !r.dismissed).sort((a, b) => b.at.localeCompare(a.at))
         .map((r) => ({ id: r.id, itemId: r.itemId, from: { id: r.from, name: nameOf(r.from) }, note: r.note, at: r.at })),
       watchlist: Object.entries(db.watchlist[me.id] || {}).sort((a, b) => b[1].localeCompare(a[1])).map(([itemId, at]) => ({ itemId, at })),
@@ -352,7 +542,7 @@ const server = http.createServer(async (req, res) => {
     send(res, 200, await route[2](me, params, body, url));
   } catch (e) {
     if (!e.status) console.error(e);
-    send(res, e.status || 500, { error: e.status ? e.message : 'Error interno' });
+    send(res, e.status || 500, { error: e.status ? e.message : 'Error interno', ...(e.itemId ? { itemId: e.itemId } : {}) });
   }
 });
 

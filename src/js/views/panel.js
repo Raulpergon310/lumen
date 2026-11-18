@@ -296,6 +296,7 @@ async function paintFriends(box, s) {
   const link = (id) => (byId.has(id) ? h('a', { href: `#/item/${byId.get(id).Id}` }, nameOf(id)) : nameOf(id));
 
   const totals = h('div', { class: 'panel-tiles' },
+    s.totals.requests != null ? h('a', { href: '#/requests', class: 'panel-tile-link' }, tile('Peticiones', String(s.totals.requests), s.totals.requests ? 'esperando a que las añadas' : 'ninguna pendiente')) : null,
     tile('Notas', String(s.totals.ratings), `en ${s.totals.rated} títulos`),
     tile('Recomendaciones', String(s.totals.recommendations)),
     tile('En «Tengo que verla»', String(s.totals.watchlist)));

@@ -284,6 +284,29 @@ export async function friendsRows(row) {
   return [recRow, row('Tengo que verla', list.map((w) => w.item), { href: '#/pending' })].filter(Boolean);
 }
 
+// On opening the app: the films you asked for that have arrived (or were turned down), and for the
+// administrator, requests that came in since last time.
+export async function notifyRequests() {
+  const inbox = await social.inbox();
+  for (const r of (inbox.requestsAnswered || []).slice(0, 3)) {
+    toast(r.status === 'done'
+      ? `Ya está en el servidor: ${r.name}, la que pediste.`
+      : `${r.name} no se va a añadir${r.reply ? `: «${r.reply}»` : '.'}`);
+    social.requestSeen(r.id).catch(() => {});
+  }
+  const pending = inbox.requestsPending || [];
+  if (!pending.length) return;
+  const { store } = await import('./store.js');
+  const key = `requestsSeen:${ctx.server?.id}`;
+  const seenAt = store.get(key, '');
+  const fresh = pending.filter((r) => r.at > seenAt);
+  store.set(key, pending.reduce((a, r) => (r.at > a ? r.at : a), seenAt));
+  if (!fresh.length) return;
+  toast(fresh.length === 1
+    ? `${fresh[0].by} te pide ${fresh[0].name}. Está en Pendientes → Pedir.`
+    : `Tienes ${fresh.length} peticiones nuevas, como ${fresh[0].name} de ${fresh[0].by}. Están en Pendientes → Pedir.`);
+}
+
 // On opening the app: one notice for recommendations that arrived since last time.
 export async function notifyRecommendations() {
   const key = `recsSeen:${ctx.server?.id}`;

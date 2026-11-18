@@ -7,6 +7,11 @@ Un servicio pequeño que se instala junto a Jellyfin y le da a Lumen lo que Jell
   Lumen, una fila «Te recomiendan tus amigos» en Inicio y una nota en la ficha.
 - **Tengo que verla**: una lista propia que sale en Inicio. Lo que ya has visto desaparece solo.
 - **Quién la ha visto**: en la ficha, para todos los usuarios y no solo para el administrador.
+- **Pedir películas y series** que no están en el servidor (Pendientes → «Pedir una película o serie», o «Pídelo» al
+  final de una búsqueda). Se busca en TMDB a través de Jellyfin, sin claves extra. El administrador recibe un aviso,
+  puede rechazarlas con un motivo, y cuando el título aparece en la biblioteca la petición se marca sola y se avisa a
+  quien la pidió. Si varios piden lo mismo, se juntan en una sola petición.
+- **Privacidad**: cada usuario puede elegir en Ajustes no aparecer en «quién la ha visto».
 
 Gasta muy poco: unos 30–50 MB de memoria y casi nada de procesador. Los datos van en un único archivo, `data/data.json`.
 

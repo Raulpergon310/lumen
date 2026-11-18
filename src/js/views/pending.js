@@ -46,6 +46,9 @@ function header(...extra) {
     extra);
 }
 
+// To Peticiones: ask for something that isn't on the server.
+const askLink = () => h('a', { class: 'pending-ask', href: '#/requests' }, h('span', { html: icons.send }), 'Pedir una película o serie');
+
 function paint(body, { recs, list }) {
   // One entry per card: what's on your list, then what friends recommend (not repeated).
   const listIds = new Set(list.map((w) => w.item.Id));
@@ -63,7 +66,8 @@ function paint(body, { recs, list }) {
   const top = h('div', { class: 'pending-top' },
     boxsets() ? h('a', { class: 'eyebrow-link', href: `#/library/${boxsets().Id}` }, '‹ Colecciones') : null,
     h('h1', null, 'Pendientes'),
-    summary);
+    summary,
+    askLink());
 
   const remove = async (entry, card) => {
     if (entry.kind === 'list') {
@@ -191,5 +195,7 @@ function emptyPage() {
     h('div', { class: 'pending-empty-art', html: icons.bookmark }),
     h('h1', null, 'Nada pendiente'),
     h('p', { class: 'muted' }, 'Guarda aquí lo que quieras ver con el marcador de cada ficha. Cuando un amigo te recomiende algo, también aparecerá aquí.'),
-    h('div', { class: 'actions' }, button('Ir al inicio', { kind: 'primary', onclick: () => { location.hash = '#/home'; } })));
+    h('div', { class: 'actions' },
+      button('Ir al inicio', { kind: 'primary', onclick: () => { location.hash = '#/home'; } }),
+      button('Pedir una película o serie', { icon: 'send', onclick: () => { location.hash = '#/requests'; } })));
 }
