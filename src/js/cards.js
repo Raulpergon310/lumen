@@ -82,7 +82,12 @@ export function thumbCard(item, { showPlay = true } = {}) {
 export function row(title, items, { kind = 'poster', href } = {}) {
   if (!items?.length) return null;
   const make = kind === 'thumb' ? thumbCard : posterCard;
-  const track = h('div', { class: `row-track row-${kind}` }, items.map((i) => make(i)));
+  return rowOf(title, items.map((i) => make(i)), { kind, href });
+}
+
+// The same row around cards built elsewhere (Pendientes, Panel). title may be a string or nodes.
+export function rowOf(title, cards, { kind = 'poster', href, cls = '' } = {}) {
+  const track = h('div', { class: `row-track row-${kind}` }, cards);
   const scroll = (dir) => track.scrollBy({ left: dir * track.clientWidth * 0.85, behavior: 'smooth' });
   const prev = h('button', { class: 'row-arrow prev', 'aria-label': 'Anterior', html: icons.back, onclick: () => scroll(-1) });
   const next = h('button', { class: 'row-arrow next', 'aria-label': 'Siguiente', html: icons.next, onclick: () => scroll(1) });
@@ -91,8 +96,10 @@ export function row(title, items, { kind = 'poster', href } = {}) {
     next.classList.toggle('hidden', track.scrollLeft + track.clientWidth >= track.scrollWidth - 8);
   };
   track.addEventListener('scroll', update, { passive: true });
+  // Cards added or removed later (Pendientes) change whether there is anything to scroll to.
+  new MutationObserver(update).observe(track, { childList: true });
   requestAnimationFrame(update);
-  return h('section', { class: 'row' },
+  return h('section', { class: `row ${cls}` },
     h('div', { class: 'row-head' },
       h('h2', null, title),
       href ? h('a', { class: 'row-more', href }, 'Ver todo') : null),

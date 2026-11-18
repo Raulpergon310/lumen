@@ -166,7 +166,7 @@ function interleave(items) {
   return out;
 }
 
-function metaLine(item) {
+export function metaLine(item) {
   const parts = [];
   if (item.ProductionYear) parts.push(item.ProductionYear);
   if (item.Type === 'Series') parts.push('Serie');

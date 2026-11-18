@@ -1,7 +1,7 @@
 import { h, spinner, emptyState, image } from '../ui.js';
 import { ctx } from '../context.js';
 import { icons } from '../icons.js';
-import { posterSrc } from '../media.js';
+import { posterSrc, backdropSrc } from '../media.js';
 import { store } from '../store.js';
 import { posterCard, row } from '../cards.js';
 
@@ -189,7 +189,10 @@ function pendingBanner() {
     const items = [...list.map((w) => w.item), ...recs.map((r) => r.item)];
     const n = (x, one, many) => `${x} ${x === 1 ? one : many}`;
     const sub = [list.length ? n(list.length, 'guardada', 'guardadas') : '', recs.length ? n(recs.length, 'recomendación', 'recomendaciones') : ''].filter(Boolean).join(' · ') || 'Guarda aquí lo que quieras ver';
+    // Behind the glass, the backdrop of the newest thing on the list (as a card on Apple TV's home).
+    const bg = items.map((it) => backdropSrc(ctx.api, it, 1280)).find(Boolean);
     box.replaceChildren(h('a', { class: 'pending-banner', href: '#/pending' },
+      bg ? h('img', { class: 'pending-banner-bg', src: bg, alt: '', decoding: 'async', loading: 'lazy' }) : null,
       h('div', { class: 'pending-banner-text' },
         h('span', { class: 'pending-banner-icon', html: icons.bookmarkFill }),
         h('div', null, h('h2', null, 'Pendientes'), h('p', null, sub))),

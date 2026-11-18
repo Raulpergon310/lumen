@@ -5,11 +5,12 @@ import { h, image } from '../ui.js';
 import { ctx } from '../context.js';
 import { posterSrc } from '../media.js';
 
-// One colour per user, in a fixed order (by name), the same in every chart: violets, pinks and blues,
-// chosen so they still tell apart with colour blindness. Past five, "Otros" (grey) in the monthly chart.
-const COLORS = ['#8b5cf6', '#d9468f', '#4a86e8', '#d06aa0', '#7067f0'];
+// One colour per user, in a fixed order (by name), the same in every chart: Apple's system blue,
+// orange, green, pink and cyan (blue/orange first, which tell apart with any colour blindness).
+// Past five, "Otros" (grey) in the monthly chart. Single-series bars (genres) are white.
+const COLORS = ['#0a84ff', '#ff9f0a', '#30d158', '#ff375f', '#64d2ff'];
 const OTHER = '#8e8e93';
-const ACCENT = '#8b5cf6';
+const ACCENT = 'rgba(255, 255, 255, 0.85)';
 const MONTHS = 12;
 const PAGE = 36;
 
@@ -135,7 +136,7 @@ function mount(box, people) {
       fav ? kpi(state.user ? 'Lo último' : 'La más vista', fav.name, state.user ? fav.viewers.find((v) => v.id === state.user)?.when || '' : `por ${fav.viewers.length} ${fav.viewers.length === 1 ? 'persona' : 'personas'}`, null, fav.poster) : null);
   }
 
-  // One purple bar per genre (counting each title once per person who saw it).
+  // One bar per genre (counting each title once per person who saw it).
   function genres(data) {
     const counts = new Map();
     for (const t of data.titles) {

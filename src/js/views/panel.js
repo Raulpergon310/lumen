@@ -5,7 +5,8 @@ import { h, episodeLabel, image } from '../ui.js';
 import { ctx } from '../context.js';
 import { social, configured, waitForSocial } from '../social.js';
 import { watchedSection } from './panel-watched.js';
-import { posterSrc, thumbSrc } from '../media.js';
+import { backdropSrc, posterSrc, thumbSrc } from '../media.js';
+import { posterCard, rowOf } from '../cards.js';
 import { icons } from '../icons.js';
 
 const LIVE_MS = 5000;
@@ -24,8 +25,12 @@ export async function panelView({ isStale }) {
   const watchedBox = h('div');
   const activity = h('div', { class: 'panel-card' });
 
+  // Header over the backdrop of whatever is playing right now (Apple TV style); dark when nothing is.
+  const stageBg = h('div', { class: 'panel-stage-bg' });
+  const headSub = h('p', { class: 'panel-head-sub' }, ctx.server?.name || '');
   const page = h('div', { class: 'page panel' },
-    h('h1', null, 'Panel'),
+    h('div', { class: 'panel-stage' }, stageBg, h('div', { class: 'panel-stage-shade' }),
+      h('div', { class: 'panel-head' }, h('h1', null, 'Panel'), headSub)),
     section('Ahora mismo', live),
     section('Lo que se ha visto', watchedBox),
     section('NAS', nas),
@@ -64,6 +69,7 @@ export async function panelView({ isStale }) {
     const sessions = await api.req('/Sessions', { fresh: true, quiet: true, query: { ActiveWithinSeconds: 960 } }).catch(() => null);
     if (isStale()) return;
     paintLive(live, sessions);
+    paintStage(stageBg, sessions);
   };
   const timer = setInterval(refresh, LIVE_MS);
   await refresh();
@@ -99,7 +105,9 @@ export async function panelView({ isStale }) {
   ]).then(([counts, info, users, log]) => {
     if (isStale()) return;
     const val = (r) => (r.status === 'fulfilled' ? r.value : null);
-    paintLibrary(library, val(counts), val(info));
+    const si = val(info);
+    if (si) headSub.textContent = `${si.ServerName}  ·  Jellyfin ${si.Version}`;
+    paintLibrary(library, val(counts), si);
     userList = val(users);
     paintUsers(usersBox, userList, stats);
     paintActivity(activity, val(log));
@@ -114,36 +122,80 @@ function section(title, body) {
 }
 
 // ---------- now playing ----------
+// Big 16:9 cards like "Seguir viendo": the picture, who is watching over it, the progress bar, and
+// under it what and how (direct or converted).
+let liveKey = '';
 function paintLive(box, sessions) {
-  if (!sessions) { box.replaceChildren(h('p', { class: 'muted' }, 'No se pudo consultar el servidor.')); return; }
+  if (!sessions) { box.replaceChildren(h('p', { class: 'muted' }, 'No se pudo consultar el servidor.')); liveKey = ''; return; }
   const playing = sessions.filter((s) => s.NowPlayingItem);
   const idle = sessions.filter((s) => !s.NowPlayingItem && s.UserName);
   const api = ctx.api;
+  // Same people watching the same things: only move the bars, so the pictures don't flash every 5 s.
+  const key = playing.map((s) => `${s.Id}:${s.NowPlayingItem.Id}`).join('|') + `#${idle.length}`;
+  if (key === liveKey && box.querySelector('.panel-now')) {
+    for (const s of playing) {
+      const card = box.querySelector(`[data-session="${CSS.escape(s.Id)}"]`);
+      if (card) fillNow(card, s);
+    }
+    return;
+  }
+  liveKey = key;
   const cards = playing.map((s) => {
     const it = s.NowPlayingItem;
-    const ps = s.PlayState || {};
-    const pct = it.RunTimeTicks ? Math.min(100, (ps.PositionTicks || 0) / it.RunTimeTicks * 100) : 0;
-    const t = s.TranscodingInfo;
-    let how = 'Directo';
-    if (ps.PlayMethod === 'Transcode' && t) {
-      how = t.IsVideoDirect ? 'Convirtiendo el audio' : 'Convirtiendo la imagen';
-      const why = (t.TranscodeReasons || []).map(reason).filter(Boolean)[0];
-      if (why) how += ` · ${why}`;
-    } else if (ps.PlayMethod === 'DirectStream') how = 'Directo (reempaquetado)';
-    const title = it.Type === 'Episode' ? `${it.SeriesName} · ${episodeLabel(it)}` : it.Name;
-    return h('a', { class: 'panel-session', href: `#/item/${it.Type === 'Episode' && it.SeriesId ? it.SeriesId : it.Id}` },
-      image(it.Type === 'Episode' ? thumbSrc(api, it, 400) : posterSrc(api, it, 200), { cls: it.Type === 'Episode' ? 'panel-thumb wide' : 'panel-thumb', placeholder: it.Name }),
-      h('div', { class: 'panel-session-text' },
-        h('div', { class: 'panel-session-user' }, s.UserName, ps.IsPaused ? h('span', { class: 'panel-tag' }, 'En pausa') : null),
-        h('div', { class: 'panel-session-title' }, title),
-        h('div', { class: 'muted small' }, `${s.Client || ''} · ${s.DeviceName || ''}`),
-        h('div', { class: 'progress panel-progress' }, h('div', { style: { width: `${pct}%` } })),
-        h('div', { class: 'muted small' }, `${fmtClock(ps.PositionTicks)} de ${fmtClock(it.RunTimeTicks)} · `, h('span', { class: how === 'Directo' ? 'ok' : 'warn' }, how))));
+    const card = h('a', { class: 'card card-thumb panel-now', href: `#/item/${it.Type === 'Episode' && it.SeriesId ? it.SeriesId : it.Id}`, dataset: { session: s.Id } },
+      h('div', { class: 'card-art' },
+        image(thumbSrc(api, it, 640) || backdropSrc(api, it, 640), { placeholder: it.Name }),
+        h('div', { class: 'panel-now-shade' }),
+        h('div', { class: 'panel-now-who' }, userAvatar(s.UserId, s.UserName, s.UserPrimaryImageTag), h('span', null, s.UserName), h('span', { class: 'panel-tag pause-tag' }, 'En pausa')),
+        h('div', { class: 'progress' }, h('div', { class: 'panel-now-bar' }))),
+      h('div', { class: 'card-title' }, it.Type === 'Episode' ? it.SeriesName : it.Name),
+      h('div', { class: 'card-sub panel-now-sub' }));
+    fillNow(card, s);
+    return card;
   });
   box.replaceChildren(...[
-    cards.length ? h('div', { class: 'panel-sessions' }, cards) : h('p', { class: 'muted' }, 'Nadie está viendo nada ahora mismo.'),
-    idle.length ? h('p', { class: 'muted small' }, `Conectados sin reproducir: ${[...new Set(idle.map((s) => s.UserName))].join(', ')}`) : null,
+    cards.length ? h('div', { class: 'row-body' }, h('div', { class: 'row-track row-thumb' }, cards)) : h('p', { class: 'muted' }, 'Nadie está viendo nada ahora mismo.'),
+    idle.length ? h('p', { class: 'muted small panel-idle' }, `Conectados sin reproducir: ${[...new Set(idle.map((s) => s.UserName))].join(', ')}`) : null,
   ].filter(Boolean));
+}
+
+function fillNow(card, s) {
+  const it = s.NowPlayingItem;
+  const ps = s.PlayState || {};
+  const pct = it.RunTimeTicks ? Math.min(100, (ps.PositionTicks || 0) / it.RunTimeTicks * 100) : 0;
+  const t = s.TranscodingInfo;
+  let how = 'Directo';
+  if (ps.PlayMethod === 'Transcode' && t) {
+    how = t.IsVideoDirect ? 'Convirtiendo el audio' : 'Convirtiendo la imagen';
+    const why = (t.TranscodeReasons || []).map(reason).filter(Boolean)[0];
+    if (why) how += ` · ${why}`;
+  } else if (ps.PlayMethod === 'DirectStream') how = 'Directo (reempaquetado)';
+  card.querySelector('.panel-now-bar').style.width = `${Math.max(2, pct)}%`;
+  card.querySelector('.pause-tag').hidden = !ps.IsPaused;
+  card.querySelector('.panel-now-sub').replaceChildren(
+    h('span', null, `${it.Type === 'Episode' ? `${episodeLabel(it)}  ·  ` : ''}${fmtClock(ps.PositionTicks)} de ${fmtClock(it.RunTimeTicks)}`),
+    h('span', { class: 'panel-now-device' },
+      h('span', { class: how.startsWith('Directo') ? 'ok' : 'warn' }, how),
+      `  ·  ${s.Client || ''}${s.DeviceName ? ` · ${s.DeviceName}` : ''}`));
+}
+
+// Behind the title: the backdrop of the first thing playing, cross-faded when it changes.
+function paintStage(bg, sessions) {
+  const it = sessions?.find((s) => s.NowPlayingItem)?.NowPlayingItem;
+  const src = it ? backdropSrc(ctx.api, it, 1920) : null;
+  if ((bg.dataset.src || '') === (src || '')) return;
+  bg.dataset.src = src || '';
+  const old = [...bg.children];
+  if (!src) { old.forEach((l) => l.classList.remove('on')); return; }
+  const img = h('img', { alt: '', decoding: 'async', src });
+  img.addEventListener('load', () => { img.classList.add('on'); setTimeout(() => old.forEach((l) => l.remove()), 1200); });
+  bg.append(img);
+}
+
+function userAvatar(id, name, tag) {
+  return tag
+    ? h('img', { class: 'panel-avatar', alt: '', src: ctx.api.buildUrl(`/Users/${id}/Images/Primary`, { fillWidth: 56, quality: 90, tag }) })
+    : h('span', { class: 'panel-avatar letter' }, (name || '?')[0].toUpperCase());
 }
 
 function reason(r) {
@@ -220,7 +272,8 @@ function paintUsers(box, users, stats) {
   const rows = [...users].sort((a, b) => String(b.LastActivityDate || '').localeCompare(String(a.LastActivityDate || ''))).map((u) => {
     const s = social.get(u.Name);
     return h('tr', null,
-      h('td', null, u.Name, u.Policy?.IsAdministrator ? h('span', { class: 'panel-tag' }, 'admin') : null, u.Policy?.IsDisabled ? h('span', { class: 'panel-tag' }, 'desactivado') : null),
+      h('td', null, h('span', { class: 'panel-user' }, userAvatar(u.Id, u.Name, u.PrimaryImageTag), u.Name,
+        u.Policy?.IsAdministrator ? h('span', { class: 'panel-tag' }, 'admin') : null, u.Policy?.IsDisabled ? h('span', { class: 'panel-tag' }, 'desactivado') : null)),
       h('td', { class: 'muted' }, u.LastActivityDate ? ago(u.LastActivityDate) : 'nunca'),
       h('td', null, s?.ratings || '–'),
       h('td', null, s ? `${s.sent} / ${s.received}` : '–'),
@@ -247,35 +300,38 @@ async function paintFriends(box, s) {
     tile('Recomendaciones', String(s.totals.recommendations)),
     tile('En «Tengo que verla»', String(s.totals.watchlist)));
 
+  // Best rated: real poster cards in a row, with the friends' average over the corner.
   const top = s.topRated.filter((r) => byId.has(r.itemId));
-  const topRow = top.length ? h('div', { class: 'panel-top' }, top.map((r) => {
-    const it = byId.get(r.itemId);
-    return h('a', { class: 'panel-top-item', href: `#/item/${it.Id}`, title: it.Name },
-      image(posterSrc(ctx.api, it, 200), { cls: 'panel-thumb', placeholder: it.Name }),
-      h('div', { class: 'panel-top-score' }, h('span', { html: icons.star }), r.average.toLocaleString('es-ES'), h('span', { class: 'muted' }, ` · ${r.count}`)),
-      h('div', { class: 'panel-top-name' }, it.Name));
-  })) : h('p', { class: 'muted' }, 'Todavía nadie ha puntuado nada.');
+  const topRow = top.length
+    ? rowOf('Mejor valoradas', top.map((r) => {
+      const card = posterCard(byId.get(r.itemId));
+      card.querySelector('.card-art')?.append(h('span', { class: 'panel-score' }, h('span', { html: icons.star }), r.average.toLocaleString('es-ES')));
+      const sub = card.querySelector('.card-sub') || card.appendChild(h('div', { class: 'card-sub' }));
+      sub.textContent = `${r.count} ${r.count === 1 ? 'nota' : 'notas'}`;
+      return card;
+    }), { cls: 'panel-row' })
+    : h('p', { class: 'muted' }, 'Todavía nadie ha puntuado nada.');
 
+  const thumb = (id) => (byId.has(id) ? image(posterSrc(ctx.api, byId.get(id), 80), { cls: 'panel-list-art', placeholder: '' }) : h('span', { class: 'panel-list-art' }));
   const list = (items, empty) => (items.length ? h('ul', { class: 'panel-list' }, items) : h('p', { class: 'muted' }, empty));
   box.replaceChildren(
     totals,
-    h('h3', null, 'Mejor valoradas'),
     topRow,
     h('div', { class: 'panel-columns' },
       h('div', { class: 'panel-card' }, h('h3', null, 'Últimas notas'),
-        list(s.recentRatings.map((r) => h('li', null, h('b', null, r.user), ' le ha puesto ', h('span', { class: 'panel-stars' }, '★'.repeat(r.score) + '☆'.repeat(5 - r.score)), ' a ', link(r.itemId), h('span', { class: 'muted small' }, ` · ${ago(r.at)}`))), 'Sin notas todavía.')),
+        list(s.recentRatings.map((r) => h('li', { class: 'with-art' }, thumb(r.itemId), h('div', null, h('b', null, r.user), ' le ha puesto ', h('span', { class: 'panel-stars' }, '★'.repeat(r.score) + '☆'.repeat(5 - r.score)), ' a ', link(r.itemId), h('span', { class: 'muted small' }, ` · ${ago(r.at)}`)))), 'Sin notas todavía.')),
       h('div', { class: 'panel-card' }, h('h3', null, 'Últimas recomendaciones'),
-        list(s.recentRecommendations.map((r) => h('li', null, h('b', null, r.from), ' → ', h('b', null, r.to), ': ', link(r.itemId),
+        list(s.recentRecommendations.map((r) => h('li', { class: 'with-art' }, thumb(r.itemId), h('div', null, h('b', null, r.from), ' → ', h('b', null, r.to), ': ', link(r.itemId),
           r.note ? h('span', { class: 'muted' }, ` «${r.note}»`) : null,
-          h('span', { class: 'muted small' }, ` · ${ago(r.at)}${r.dismissed ? ' · vista o descartada' : ''}`))), 'Nadie ha recomendado nada todavía.'))));
+          h('span', { class: 'muted small' }, ` · ${ago(r.at)}${r.dismissed ? ' · vista o descartada' : ''}`)))), 'Nadie ha recomendado nada todavía.'))));
 }
 
 // ---------- activity ----------
 function paintActivity(box, log) {
   const items = log?.Items || [];
   if (!items.length) { box.replaceChildren(h('p', { class: 'muted' }, log ? 'Sin actividad reciente.' : 'No se pudo leer la actividad.')); return; }
-  box.replaceChildren(h('ul', { class: 'panel-list' }, items.map((e) => h('li', { class: e.Severity === 'Error' || e.Severity === 'Warning' ? 'warn' : '' },
-    e.Name, h('span', { class: 'muted small' }, ` · ${ago(e.Date)}`)))));
+  box.replaceChildren(h('ul', { class: 'panel-list activity' }, items.map((e) => h('li', { class: e.Severity === 'Error' || e.Severity === 'Warning' ? 'warn' : '' },
+    h('span', { class: 'panel-dot' }), h('span', null, e.Name, h('span', { class: 'muted small' }, ` · ${ago(e.Date)}`))))));
 }
 
 function ago(date) {
