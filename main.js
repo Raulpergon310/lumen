@@ -127,6 +127,62 @@ function mpvConnect(state, attempt = 0) {
 
 ipcMain.handle('mpv:available', () => fs.existsSync(MPV_EXE));
 
+// The pages may only ask mpv for what the player needs. mpv's IPC can also run programs
+// (`run`, `subprocess`) or load scripts, so anything else is refused here.
+const MPV_OPTIONS = new Set(['idle', 'start', 'force-media-title', 'aid', 'sid', 'alang', 'slang', 'sub-files', 'af']);
+const MPV_SETTABLE = new Set(['time-pos', 'volume', 'mute', 'pause', 'aid', 'sid']);
+const isHttpUrl = (u) => typeof u === 'string' && /^https?:\/\//i.test(u);
+const isPlain = (v) => ['string', 'number', 'boolean'].includes(typeof v);
+
+// loadfile options come as "key=%<bytes>%value,…" (see encodeOpts in mpv-player.js).
+function loadfileOptionsAllowed(s) {
+  if (s === undefined || s === '') return true;
+  if (typeof s !== 'string') return false;
+  const buf = Buffer.from(s, 'utf8');
+  let i = 0;
+  while (i < buf.length) {
+    const eq = buf.indexOf('=', i);
+    if (eq < 0) return false;
+    if (!MPV_OPTIONS.has(buf.toString('utf8', i, eq))) return false;
+    const m = /^%(\d+)%/.exec(buf.toString('utf8', eq + 1, eq + 16));
+    if (!m) return false;
+    i = eq + 1 + m[0].length + Number(m[1]);
+    if (i > buf.length) return false;
+    if (i < buf.length) {
+      if (buf[i] !== 0x2c) return false; // ','
+      i++;
+    }
+  }
+  return true;
+}
+
+function mpvCommandAllowed(c) {
+  if (!Array.isArray(c) || !c.every(isPlain)) return false;
+  const [name, a, b] = c;
+  switch (name) {
+    case 'loadfile': return isHttpUrl(a) && b === 'replace' && c.length <= 5 && loadfileOptionsAllowed(c[4]);
+    case 'set_property': return MPV_SETTABLE.has(a) && c.length === 3;
+    case 'cycle': return ['pause', 'mute', 'audio', 'sub'].includes(a);
+    case 'add': return a === 'volume' && typeof b === 'number';
+    case 'seek': return typeof a === 'number' && ['relative', 'absolute'].includes(b);
+    case 'sub-add': return isHttpUrl(a);
+    case 'show-text': return typeof a === 'string';
+    case 'script-message': return typeof a === 'string' && a.startsWith('lumen-');
+    default: return false;
+  }
+}
+
+// Start options: the ones above, plus a single http(s) URL after `--`.
+function mpvArgsAllowed(args) {
+  if (!Array.isArray(args) || !args.every((x) => typeof x === 'string')) return false;
+  const sep = args.indexOf('--');
+  if (sep < 0 || sep !== args.length - 2 || !isHttpUrl(args[sep + 1])) return false;
+  return args.slice(0, sep).every((x) => {
+    const m = /^--([a-z-]+)=/.exec(x);
+    return !!m && MPV_OPTIONS.has(m[1]);
+  });
+}
+
 // Embedded mode: mpv draws into a plain native window (no web page on it, so nothing covers the
 // video) glued over the app's content area, and a transparent window on top of that carries the
 // app's own controls. To the user it is all one window.
@@ -273,6 +329,10 @@ ipcMain.on('win:move-by', (_e, dx, dy) => {
 });
 
 ipcMain.handle('mpv:start', (_e, args, { embed = false } = {}) => {
+  if (!mpvArgsAllowed(args)) {
+    log('mpv: argumentos rechazados', JSON.stringify(args).slice(0, 300));
+    return false;
+  }
   if (mpv) {
     try { mpv.proc.kill(); } catch {}
     mpv = null;
@@ -305,7 +365,13 @@ ipcMain.handle('mpv:start', (_e, args, { embed = false } = {}) => {
   return true;
 });
 
-ipcMain.handle('mpv:command', (_e, command) => mpvCommand(command));
+ipcMain.handle('mpv:command', (_e, command) => {
+  if (!mpvCommandAllowed(command)) {
+    log('mpv: comando rechazado', JSON.stringify(command).slice(0, 200));
+    return false;
+  }
+  return mpvCommand(command);
+});
 
 // HDR film about to start: switch on Windows HDR for the screen the app is on (see hdr.js).
 // It is switched off again when mpv closes, only if Lumen switched it on.
@@ -363,6 +429,7 @@ function createWindow() {
       // Jellyfin servers on a LAN are usually plain http.
       allowRunningInsecureContent: true,
       backgroundThrottling: false,
+      additionalArguments: [`--lumen-version=${app.getVersion()}`],
     },
   });
   if (config.maximized) win.maximize();

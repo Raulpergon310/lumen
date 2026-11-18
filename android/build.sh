@@ -38,6 +38,10 @@ echo "· recursos"
   --min-sdk-version 23 --target-sdk-version 35 --java "$OUT/gen" "$OUT/res.zip" \
   --version-name "$VERSION" --version-code "$VERSION_CODE" --replace-version ${LUMEN_DEBUG:+--debug-mode}
 
+# The repo the TV app accepts updates from (ApkUpdater only downloads its releases).
+mkdir -p "$OUT/gen/app/lumen/tv"
+printf 'package app.lumen.tv;\nfinal class BuildInfo { static final String REPO = "%s"; }\n' "$REPO" > "$OUT/gen/app/lumen/tv/BuildInfo.java"
+
 echo "· java"
 "$JDK/bin/javac" -nowarn -source 11 -target 11 -encoding UTF-8 -classpath "$PLATFORM" -d "$OUT/classes" \
   $(find "$HERE/src" "$OUT/gen" -name '*.java') 2>&1 | grep -v "^warning\|^Note\|^1 warning" || true

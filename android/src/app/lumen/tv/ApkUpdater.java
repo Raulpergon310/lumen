@@ -22,7 +22,19 @@ class ApkUpdater {
 
     interface Report { void send(String state); }
 
+    // Only APKs from this project's own GitHub releases: the page can't make the TV install anything else.
+    static boolean allowedUrl(String url) {
+        if (url == null || BuildInfo.REPO.isEmpty()) return false;
+        String prefix = "https://github.com/" + BuildInfo.REPO + "/releases/download/";
+        return url.startsWith(prefix) && url.endsWith(".apk") && !url.contains("..");
+    }
+
     static void install(Activity activity, String apkUrl, Report report) {
+        if (!allowedUrl(apkUrl)) {
+            Log.w("Lumen", "update: URL no permitida " + apkUrl);
+            report.send("error URL de actualización no permitida");
+            return;
+        }
         // Android 8+: the user must allow Lumen to install apps once.
         if (Build.VERSION.SDK_INT >= 26 && !activity.getPackageManager().canRequestPackageInstalls()) {
             report.send("permission");
@@ -84,7 +96,12 @@ class ApkUpdater {
             c.setReadTimeout(30000);
             c.setRequestProperty("User-Agent", "LumenTV");
             int code = c.getResponseCode();
-            if (code >= 300 && code < 400) { url = c.getHeaderField("Location"); c.disconnect(); continue; }
+            if (code >= 300 && code < 400) {
+                url = c.getHeaderField("Location");
+                c.disconnect();
+                if (url == null || !url.startsWith("https://")) throw new Exception("redirección no segura");
+                continue;
+            }
             if (code != 200) throw new Exception("HTTP " + code);
             return c;
         }

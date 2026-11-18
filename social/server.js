@@ -173,7 +173,7 @@ function system() {
   const out = { load: os.loadavg(), cpus: os.cpus().length, uptime: os.uptime(), memTotal: os.totalmem(), memAvailable: os.freemem() };
   try {
     const mi = fs.readFileSync('/proc/meminfo', 'utf8');
-    const kb = (k) => Number(mi.match(new RegExp(`^${k}:\s+(\d+)`, 'm'))?.[1]) * 1024;
+    const kb = (k) => Number(mi.match(new RegExp(String.raw`^${k}:\s+(\d+)`, 'm'))?.[1]) * 1024;
     if (kb('MemTotal')) out.memTotal = kb('MemTotal');
     if (kb('MemAvailable')) out.memAvailable = kb('MemAvailable');
   } catch {}

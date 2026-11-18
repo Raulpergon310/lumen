@@ -1,7 +1,10 @@
 // Minimal Jellyfin REST client. Every request has a timeout so a slow or
 // unreachable server can never freeze the app.
+import { BUILD } from './build-info.js';
+
 const CLIENT = 'Lumen';
-const VERSION = '1.0.0';
+// The app's real version, so Jellyfin's dashboard shows which Lumen each device runs.
+const VERSION = window.lumenHost?.version || window.LumenTV?.appVersion?.() || BUILD.version || 'dev';
 const DEVICE = window.lumenHost ? 'Windows PC' : window.LumenTV ? 'Android TV' : 'Navegador';
 
 export const LIST_FIELDS = 'PrimaryImageAspectRatio,Overview,Genres';

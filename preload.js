@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('lumenHost', {
   log: (msg) => ipcRenderer.send('log', String(msg)),
   keepAwake: (on) => ipcRenderer.send('power:keepAwake', !!on),
   isElectron: true,
+  version: (process.argv.find((a) => a.startsWith('--lumen-version=')) || '').slice('--lumen-version='.length),
   update: {
     check: () => ipcRenderer.invoke('update:check'),
     info: () => ipcRenderer.invoke('update:info'),
