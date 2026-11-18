@@ -345,6 +345,19 @@ ipcMain.on('overlay:data', (_e, data) => {
   if (overlay && !overlay.isDestroyed()) overlay.webContents.send('overlay:data', data);
 });
 ipcMain.on('win:fullscreen', () => { if (win) win.setFullScreen(!win.isFullScreen()); });
+// The couch interface (tv.js) goes full screen while it is on; answers whether it already was.
+ipcMain.handle('win:set-fullscreen', (_e, on) => {
+  if (!win || win.isDestroyed()) return false;
+  const was = win.isFullScreen();
+  if (was !== !!on) win.setFullScreen(!!on);
+  return was;
+});
+// Sunshine (game streaming, watched on the TV with Moonlight) running on this PC: a hint for tv.js.
+ipcMain.handle('sunshine:running', () => new Promise((resolve) => {
+  if (process.platform !== 'win32') return resolve(false);
+  require('child_process').execFile('tasklist', ['/FI', 'IMAGENAME eq sunshine.exe', '/NH'], { windowsHide: true, timeout: 5000 },
+    (err, out) => resolve(!err && /sunshine.exe/i.test(String(out))));
+}));
 // The built-in player asks for real fullscreen while it is open, so no window buttons sit over the video.
 let builtinRestore = null;
 ipcMain.on('win:player', (_e, on) => {

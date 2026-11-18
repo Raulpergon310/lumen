@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('lumenHost', {
   log: (msg) => ipcRenderer.send('log', String(msg)),
   keepAwake: (on) => ipcRenderer.send('power:keepAwake', !!on),
   isElectron: true,
+  sunshine: () => ipcRenderer.invoke('sunshine:running'),
   version: (process.argv.find((a) => a.startsWith('--lumen-version=')) || '').slice('--lumen-version='.length),
   update: {
     check: () => ipcRenderer.invoke('update:check'),
@@ -23,6 +24,7 @@ contextBridge.exposeInMainWorld('lumenHost', {
   },
   win: {
     fullscreen: () => ipcRenderer.send('win:fullscreen'),
+    setFullscreen: (on) => ipcRenderer.invoke('win:set-fullscreen', !!on),
     player: (on) => ipcRenderer.send('win:player', !!on),
     onFullscreen: (cb) => ipcRenderer.on('win:fullscreen-changed', (_e, on) => cb(on)),
     minimize: () => ipcRenderer.send('win:minimize'),

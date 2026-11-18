@@ -1,8 +1,17 @@
-// Android TV: moves focus with the remote's arrows and maps Back to the right "close" for each screen.
-// Only active inside the Android TV app (window.LumenTV comes from its WebView).
+// The couch interface: focus moved with a remote's arrows (or a game controller), big focus effects,
+// and Back mapped to the right "close" for each screen. Always on inside the Android TV app
+// (window.LumenTV comes from its WebView); elsewhere (the PC seen on the TV through Moonlight and
+// Sunshine, a browser on a TV) it switches on by itself when a remote or controller is driving, or
+// from Ajustes / ?tv=1.
 import { ctx } from './context.js';
+import { store, log } from './store.js';
+import { toast } from './ui.js';
+import { startGamepad } from './gamepad.js';
 
-export const IS_TV = !!window.LumenTV;
+// The Android TV app itself: VLC, APK updates, the box's limits.
+export const IS_TV_APP = !!window.LumenTV;
+// The couch interface is on (a live binding: importers always see the current value).
+export let IS_TV = IS_TV_APP;
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([type=hidden]):not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])';
 const TEXT_INPUT = 'input[type=text], input[type=search], input[type=url], input[type=password], input:not([type]), textarea';
@@ -178,8 +187,17 @@ function move(dir) {
 }
 
 function onKey(e) {
-  if (e.defaultPrevented) return;
+  if (!IS_TV || e.defaultPrevented) return;
   const t = e.target;
+  // Away from the TV app there's no Android Back: Backspace / Back / Esc do its job. Esc is left to
+  // the player and sheets when one is open (they close themselves with it).
+  if (!IS_TV_APP && ['Escape', 'Backspace', 'BrowserBack'].includes(e.key) && !t.matches?.(TEXT_INPUT)) {
+    const layer = ctx.player || document.querySelector('.sheet-backdrop, .ctx-menu');
+    if (e.key === 'Escape' && layer) return;
+    e.preventDefault();
+    back();
+    return;
+  }
   const dir = DIRS[e.key];
   if (dir) {
     // Inside a text box Left/Right move the cursor.
@@ -220,12 +238,109 @@ function back() {
   return false;
 }
 
-if (IS_TV) {
-  setTimeout(() => import('./tv-update.js').then((m) => m.checkTvUpdate()), 20000);
-  document.documentElement.classList.add('tv');
+// ---------- switching the couch interface on and off ----------
+// tvMode (Ajustes, or ?tv=1 / ?tv=0 / ?tv=auto in the address): 'auto' | 'on' | 'off'.
+const MODE_KEY = 'tvMode';
+const mode = () => store.get(MODE_KEY, 'auto');
+let auto = false; // switched on by detection, so the mouse may switch it off again
+let enteredFullscreen = false;
+let sunshine = false; // Sunshine running on this PC (Windows app): one arrow press is enough
+let lastMouse = 0;
+let arrows = [];
+
+function setTvUi(on, { why = '', fromKey = false } = {}) {
+  if (IS_TV === on) return;
+  IS_TV = on;
+  document.documentElement.classList.toggle('tv', on);
+  log(`interfaz de tele ${on ? 'encendida' : 'apagada'}${why ? ` (${why})` : ''}`);
+  if (on) {
+    focusFirstSoon();
+    fullscreen(true, fromKey);
+    if (auto) toast('Interfaz para tele: muévete con las flechas o el mando. Mueve el ratón para volver a la normal.');
+  } else {
+    clearInterval(focusTimer);
+    if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+    fullscreen(false);
+  }
+}
+
+// On a TV nothing of the window should show: full screen while the couch interface is on, and back
+// as it was afterwards. The browser only allows it from a key press, not from a controller.
+async function fullscreen(on, fromKey = false) {
+  const host = window.lumenHost;
+  try {
+    if (on) {
+      if (host?.win?.setFullscreen) enteredFullscreen = !(await host.win.setFullscreen(true));
+      else if (fromKey && !document.fullscreenElement) { await document.documentElement.requestFullscreen(); enteredFullscreen = true; }
+    } else if (enteredFullscreen) {
+      enteredFullscreen = false;
+      if (host?.win?.setFullscreen) await host.win.setFullscreen(false);
+      else if (document.fullscreenElement) await document.exitFullscreen();
+    }
+  } catch {}
+}
+
+// Ajustes changed (or the app started): follow the chosen mode.
+export function applyTvMode() {
+  if (IS_TV_APP) return;
+  auto = false;
+  const m = mode();
+  if (m === 'on') setTvUi(true, { why: 'ajuste' });
+  else setTvUi(false, { why: m === 'off' ? 'ajuste' : '' });
+}
+
+// Arrows with the mouse untouched for a while: someone on the sofa with a remote (Moonlight sends
+// the remote's keys as the keyboard's). Three presses in a few seconds, or one if Sunshine is running.
+function detectKey(e) {
+  if (IS_TV || mode() !== 'auto' || !DIRS[e.key] || e.target.matches?.(TEXT_INPUT) || e.target.matches?.('input[type=range], select')) return;
+  const now = Date.now();
+  if (lastMouse && now - lastMouse < 15000) return;
+  arrows = arrows.filter((t) => now - t < 4000).concat(now);
+  if (arrows.length < (sunshine ? 1 : 3)) return;
+  arrows = [];
+  auto = true;
+  setTvUi(true, { why: sunshine ? 'flechas, con Sunshine en marcha' : 'flechas sin ratón', fromKey: true });
+}
+
+// A real mouse move (not a twitch) brings the normal interface back, if detection had switched it.
+let moved = 0;
+let movedAt = 0;
+function onMouse(e) {
+  const now = Date.now();
+  if (now - movedAt > 1000) moved = 0;
+  movedAt = now;
+  moved += Math.abs(e.movementX || 0) + Math.abs(e.movementY || 0);
+  if (moved < 60) return;
+  lastMouse = now;
+  if (IS_TV && auto) { auto = false; setTvUi(false, { why: 'ratón' }); }
+}
+
+function onControllerUse() {
+  if (IS_TV || mode() !== 'auto') return;
+  auto = true;
+  setTvUi(true, { why: 'mando' });
+}
+
+// Called once settings are loaded (app.js).
+export function initTv() {
+  document.addEventListener('keydown', detectKey, true);
   document.addEventListener('keydown', onKey);
-  window.addEventListener('hashchange', () => focusFirstSoon());
-  window.lumenTvBack = back;
-  window.lumenTvPause = () => ctx.player?.video?.pause();
-  focusFirstSoon();
+  window.addEventListener('hashchange', () => { if (IS_TV) focusFirstSoon(); });
+  if (IS_TV_APP) {
+    setTimeout(() => import('./tv-update.js').then((m) => m.checkTvUpdate()), 20000);
+    document.documentElement.classList.add('tv');
+    window.lumenTvBack = back;
+    window.lumenTvPause = () => ctx.player?.video?.pause();
+    focusFirstSoon();
+    return;
+  }
+  const q = new URLSearchParams(location.search).get('tv');
+  if (q) store.set(MODE_KEY, ['1', 'on', 'si', 'sí'].includes(q) ? 'on' : ['0', 'off', 'no'].includes(q) ? 'off' : 'auto');
+  window.addEventListener('mousemove', onMouse, { passive: true });
+  startGamepad({ onUse: onControllerUse });
+  window.lumenHost?.sunshine?.().then((on) => {
+    sunshine = !!on;
+    if (on) log('Sunshine en marcha en este PC: la interfaz de tele se enciende con la primera flecha');
+  }).catch(() => {});
+  applyTvMode();
 }

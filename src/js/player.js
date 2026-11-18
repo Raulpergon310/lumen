@@ -7,7 +7,7 @@ import { thumbSrc } from './media.js';
 import { playbackPlan, onlyAudioConverted, keepsOriginalPicture, transcodeReasonList, IMAGE_SUBS } from './compat.js';
 import { chooseSubtitle } from './subs.js';
 import { mpvAvailable, openMpv, probeSource } from './mpv-player.js';
-import { IS_TV } from './tv.js';
+import { IS_TV, IS_TV_APP } from './tv.js';
 import { SoftAudio } from './soft-audio.js';
 
 const TICKS = 1e7;
@@ -412,9 +412,9 @@ class Player {
       startPosition: startSec,
       // Modest buffer and few, spaced-out retries: a struggling NAS shouldn't get hammered.
       // TV boxes have little RAM: a 4K stream at 30 s ahead + 30 s behind is >80 MB of buffers.
-      maxBufferLength: IS_TV ? 20 : 30,
-      maxMaxBufferLength: IS_TV ? 30 : 60,
-      backBufferLength: IS_TV ? 10 : 30,
+      maxBufferLength: IS_TV_APP ? 20 : 30,
+      maxMaxBufferLength: IS_TV_APP ? 30 : 60,
+      backBufferLength: IS_TV_APP ? 10 : 30,
       manifestLoadingTimeOut: 30000,
       fragLoadingTimeOut: 60000,
       fragLoadingMaxRetry: 3,
@@ -1188,7 +1188,7 @@ class NeedsTranscodeError extends Error {}
 // measured on a 2880x1620 panel, the plain scaling is already as crisp as mpv's — and free of
 // dropped frames when on. Not on the TV (slow GPU).
 function applySharpen(video) {
-  const a = IS_TV ? 0 : Number(store.get('sharpen', 0)) || 0;
+  const a = IS_TV_APP ? 0 : Number(store.get('sharpen', 0)) || 0;
   if (!a) return;
   let svg = document.getElementById('lumen-sharp-svg');
   if (!svg) {

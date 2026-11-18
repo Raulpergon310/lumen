@@ -1,4 +1,4 @@
-import { IS_TV } from './tv.js';
+import { IS_TV_APP, initTv } from './tv.js';
 import { startTvPlayback, finishVlcSession } from './tv-player.js';
 import { store, log } from './store.js';
 import { Api, findReachable, probeServer } from './api.js';
@@ -183,7 +183,7 @@ async function start() {
   if (!location.hash || location.hash === '#' || location.hash.startsWith('#/connect')) location.replace('#/home');
   onRoute();
   // Android TV: VLC may have answered while the app was being reloaded; report where it stopped.
-  if (IS_TV) finishVlcSession();
+  if (IS_TV_APP) finishVlcSession();
   // Look for the friends service now, so the stars are ready by the time a title is opened.
   import('./social.js').then((m) => m.socialUrl()).catch(() => {});
   // Friends' recommendations that arrived while the app was closed.
@@ -280,7 +280,7 @@ ctx.play = async (item, opts = {}) => {
 };
 
 async function startPlayback(item, opts) {
-  if (IS_TV) return startTvPlayback(item, opts);
+  if (IS_TV_APP) return startTvPlayback(item, opts);
   const { mpvAvailable, openMpv, probeInfo, forgetProbe } = await import('./mpv-player.js');
   const mode = store.get('player', 'auto');
   const hasMpv = await mpvAvailable();
@@ -353,6 +353,7 @@ ctx.showConnect = showConnect;
 ctx.savedServers = savedServers;
 
 store.load();
+initTv();
 start().catch((e) => {
   log('start: ' + (e.stack || e.message));
   showConnect();

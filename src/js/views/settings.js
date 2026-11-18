@@ -118,6 +118,15 @@ function privacySetting() {
   return row;
 }
 
+// The couch interface away from the Android TV app (tv.js): automatic, always or never.
+function tvModeSetting() {
+  const el = select('tvMode', 'auto', 'Interfaz para tele y mando',
+    [['auto', 'Automática (recomendado)'], ['on', 'Siempre'], ['off', 'Nunca']],
+    'Letras grandes y manejo con las flechas o un mando, para ver Lumen en la tele (por ejemplo, el PC en la tele con Moonlight). En automático se enciende sola al usar un mando, o las flechas sin tocar el ratón, y se apaga al mover el ratón. En la web también vale añadir ?tv=1 a la dirección.');
+  el.querySelector('select').addEventListener('change', () => import('../tv.js').then((m) => m.applyTvMode()));
+  return el;
+}
+
 export function settingsView() {
   const servers = ctx.savedServers();
   const serverList = h('div', { class: 'setting-list' }, servers.map((s) => h('div', { class: 'setting' },
@@ -178,6 +187,9 @@ export function settingsView() {
       toggle('autoplayNext', true, 'Reproducir el siguiente episodio automáticamente'),
       toggle('autoSkipIntro', false, 'Saltar intros automáticamente', 'Requiere que el servidor tenga detectadas las intros.'),
     ),
+    window.LumenTV ? null : h('section', { class: 'settings-group' },
+      h('h2', null, 'Tele y mando'),
+      tvModeSetting()),
     h('section', { class: 'settings-group' },
       h('h2', null, 'Temporadas nuevas'),
       seasonSetting()),

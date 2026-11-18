@@ -1,6 +1,7 @@
 // Controls drawn over the embedded mpv video. Same look as the built-in player; every action is an mpv command.
 import { h, fmtTime, fmtEndsAt, image } from './ui.js';
 import { icons } from './icons.js';
+import { startGamepad } from './gamepad.js';
 
 const host = window.lumenHost;
 const mpv = host.mpv;
@@ -292,6 +293,13 @@ document.addEventListener('keydown', (e) => {
     c: () => cmd('cycle', 'sub'),
     n: () => cmd('script-message', 'lumen-next'),
     s: () => cmd('script-message', 'lumen-skip'),
+    // Remote and controller keys (Moonlight, gamepad.js).
+    MediaPlayPause: () => cmd('cycle', 'pause'),
+    MediaRewind: () => seekBy(-10),
+    MediaFastForward: () => seekBy(30),
+    MediaTrackNext: () => cmd('script-message', 'lumen-next'),
+    ContextMenu: () => toggleMenu(),
+    Backspace: () => { if (!menu.hidden) menu.hidden = true; else mpv.stop(); },
     Escape: () => { if (!menu.hidden) menu.hidden = true; else mpv.stop(); },
   }[k];
   if (!map) return;
@@ -300,4 +308,6 @@ document.addEventListener('keydown', (e) => {
   poke();
 });
 
+// A game controller (or Moonlight's virtual pad) drives these controls too.
+startGamepad();
 poke();
